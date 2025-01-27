@@ -1,0 +1,177 @@
+/* Container */
+.container {
+    max-width: 500px;
+    margin: 2rem auto;
+    padding: 2rem;
+    background-color: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Title */
+.title {
+    font-size: 1.75rem;
+    font-weight: 600;
+    color: #212529;
+    margin-bottom: 2rem;
+    text-align: center;
+}
+
+/* Selected ID display */
+.selectedIdContainer {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 6px;
+    margin-bottom: 1.5rem;
+}
+
+.selectedIdLabel {
+    color: #6c757d;
+    font-weight: 500;
+}
+
+.selectedId {
+    font-family: monospace;
+    padding: 0.25rem 0.5rem;
+    background-color: #e9ecef;
+    border-radius: 4px;
+    font-size: 1rem;
+}
+
+/* Form */
+.form {
+    display: grid;
+    gap: 1rem;
+}
+
+.input {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    border: 1px solid #ced4da;
+    border-radius: 6px;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.input:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+.input:disabled {
+    background-color: #e9ecef;
+    cursor: not-allowed;
+}
+
+/* Button group */
+.buttonGroup {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-top: 0.5rem;
+}
+
+.generateButton,
+.submitButton {
+    padding: 0.75rem 1rem;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background-color 0.15s ease-in-out;
+}
+
+.generateButton {
+    background-color: #6c757d;
+    color: white;
+}
+
+.generateButton:hover:not(:disabled) {
+    background-color: #5a6268;
+}
+
+.submitButton {
+    background-color: #007bff;
+    color: white;
+}
+
+.submitButton:hover:not(:disabled) {
+    background-color: #0056b3;
+}
+
+.submitButton.loading {
+    opacity: 0.65;
+    cursor: progress;
+}
+
+/* Recent users section */
+.recentUsersSection {
+    margin: 2rem 0;
+}
+
+.recentUsersTitle {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: #495057;
+    margin-bottom: 1rem;
+}
+
+.recentUsersList {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 0.75rem;
+}
+
+.userButton {
+    padding: 0.5rem 1rem;
+    background-color: #e9ecef;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.15s ease-in-out;
+    text-align: center;
+}
+
+.userButtonUnselected:hover:not(:disabled) {
+    background-color: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+
+.userButtonSelected {
+    background-color: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+
+/* Error message */
+.errorMessage {
+    padding: 1rem;
+    margin: 1rem 0;
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    border-radius: 6px;
+    color: #dc3545;
+    text-align: center;
+}
+
+/* Loading indicator */
+.loadingIndicator {
+    text-align: center;
+    color: #6c757d;
+    padding: 2rem;
+}
+
+/* Disabled states */
+.generateButton:disabled,
+.submitButton:disabled,
+.userButton:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}

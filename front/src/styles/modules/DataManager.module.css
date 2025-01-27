@@ -1,0 +1,167 @@
+/* Container */
+.container {
+    max-width: 600px;
+    margin: 1rem auto;
+    padding: 1.5rem;
+    background-color: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Title */
+.title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #212529;
+    margin-bottom: 1.5rem;
+}
+
+/* Options container */
+.optionsContainer {
+    display: grid;
+    gap: 1.5rem;
+}
+
+/* Sections */
+.section {
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #e9ecef;
+}
+
+.sectionTitle {
+    font-size: 1rem;
+    font-weight: 500;
+    color: #495057;
+    margin-bottom: 1rem;
+}
+
+/* Contact list */
+.contactsList {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.contactItem {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.5rem;
+    background-color: #ffffff;
+    border-radius: 4px;
+    border: 1px solid #dee2e6;
+}
+
+.contactId {
+    font-family: monospace;
+    color: #495057;
+}
+
+/* Buttons */
+.manageButton {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background-color 0.15s ease-in-out;
+}
+
+.manageButton:hover:not(:disabled) {
+    background-color: #0056b3;
+}
+
+.deleteButton {
+    padding: 0.5rem 1rem;
+    background-color: #dc3545;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background-color 0.15s ease-in-out;
+}
+
+.deleteButton:hover:not(:disabled) {
+    background-color: #c82333;
+}
+
+.deleteAllButton {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background-color: #dc3545;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background-color 0.15s ease-in-out;
+}
+
+.deleteAllButton:hover:not(:disabled) {
+    background-color: #c82333;
+}
+
+.cancelButton {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background-color 0.15s ease-in-out;
+    margin-top: 1rem;
+}
+
+.cancelButton:hover:not(:disabled) {
+    background-color: #5a6268;
+}
+
+/* Disabled button states */
+.manageButton:disabled,
+.deleteButton:disabled,
+.deleteAllButton:disabled,
+.cancelButton:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+/* Warning message */
+.warning {
+    padding: 1rem;
+    margin: 1rem 0;
+    background-color: #fff3cd;
+    border: 1px solid #ffeeba;
+    border-radius: 4px;
+    color: #856404;
+    font-size: 0.9rem;
+    text-align: center;
+}
+
+/* Status messages */
+.successMessage,
+.errorMessage {
+    padding: 1rem;
+    margin: 1rem 0;
+    border-radius: 4px;
+    text-align: center;
+}
+
+.successMessage {
+    background-color: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+}
+
+.errorMessage {
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #dc3545;
+}
