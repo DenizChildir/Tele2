@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 
 const ServerConfig = () => {
     const [serverUrl, setServerUrl] = useState(localStorage.getItem('SERVER_URL') || window.location.hostname);
-    const [apiPort, setApiPort] = useState(localStorage.getItem('API_PORT') || '3000');
+    const [apiPort, setApiPort] = useState(localStorage.getItem('API_PORT') || '443');
     const [useHttps, setUseHttps] = useState(localStorage.getItem('USE_HTTPS') === 'true' || window.location.protocol === 'https:');
 
     const handleSave = () => {
@@ -44,7 +44,7 @@ const ServerConfig = () => {
                         value={apiPort}
                         onChange={(e) => setApiPort(e.target.value)}
                         className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="3000"
+                        placeholder="443"
                     />
                 </div>
                 <div className="flex items-center space-x-2">

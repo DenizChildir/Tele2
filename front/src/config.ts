@@ -4,7 +4,7 @@ const getServerUrl = () => {
 };
 
 const getApiPort = () => {
-    return localStorage.getItem('API_PORT') || '3000';
+    return localStorage.getItem('API_PORT') || '443';
 };
 
 const isHttps = () => {

@@ -71,7 +71,7 @@ type MessageType struct {
 
 func main() {
 	// Add command line flags for configuration
-	port := flag.String("port", "3000", "Port to run the server on")
+	port := flag.String("port", "443", "Port to run the server on")
 	certFile := flag.String("cert", "", "TLS certificate file path")
 	keyFile := flag.String("key", "", "TLS key file path")
 	flag.Parse()

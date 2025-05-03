@@ -8,11 +8,11 @@ export default defineConfig({
     port: 5173, // Default Vite port
     proxy: {
       '/api': {
-        target: `http://localhost:${process.env.VITE_API_PORT || 3000}`,
+        target: `http://localhost:${process.env.VITE_API_PORT || 443}`,
         changeOrigin: true,
       },
       '/ws': {
-        target: `ws://localhost:${process.env.VITE_API_PORT || 3000}`,
+        target: `ws://localhost:${process.env.VITE_API_PORT || 443}`,
         ws: true,
       }
     }
