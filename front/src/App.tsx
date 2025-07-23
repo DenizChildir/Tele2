@@ -1,156 +1,139 @@
 import React, { useState, useEffect } from 'react';
 import { Provider } from 'react-redux';
 import { store } from './store/store';
-import ServerConfig from './components/ServerConfig';
-import { UserSetup } from './components/UserSetup';
-import { Chat } from './components/chat';
 import { useAppSelector, useAppDispatch } from './hooks/redux';
-import { UserMenu } from './components/UserMenu';
-import { ConnectUser } from './components/ConnectUser';
-import { DataManager } from './components/DataManagment';
+import { UserManager } from './components/UserManager';
+import { Chat } from './components/Chat';
+import { DataManager } from './components/DataManager';
 import { WebSocketManager } from './components/WebSocketManager';
 import { WebRTCManager } from './components/WebRTCManager';
 import { initializeStorage } from './store/fileStorage';
 import { initializeAllMessagesAsync } from './store/messageSlice';
-import './App.css';
+import './styles/app.css'; // Single CSS file
 
-interface StorageState {
-    isInitialized: boolean;
-    error: string | null;
-    hasPermission: boolean;
-}
-
-const InitializationScreen = ({
-                                  error,
-                                  onInitialize
-                              }: {
-    error: string | null;
-    onInitialize: () => void;
-}) => (
-    <div className="initialization-screen">
-        <h2>Welcome to Chat App</h2>
-        <p>To get started, please select a directory where your chat messages will be stored.</p>
-        {error ? (
-            <div className="error-container">
-                <p>{error}</p>
-                <button onClick={onInitialize}>Try Again</button>
-            </div>
-        ) : (
-            <button onClick={onInitialize}>Select Storage Directory</button>
-        )}
-    </div>
-);
-
-const AppContent = () => {
+const AppContent: React.FC = () => {
     const dispatch = useAppDispatch();
     const currentUserId = useAppSelector(state => state.messages.currentUserId);
     const connectedToUser = useAppSelector(state => state.messages.connectedToUser);
-    const [storageState, setStorageState] = useState<StorageState>({
-        isInitialized: false,
-        error: null,
-        hasPermission: false
-    });
-    const [showConfig, setShowConfig] = useState(false);
-    const [isLoadingMessages, setIsLoadingMessages] = useState(false);
 
-    const toggleConfig = (e: React.MouseEvent) => {
-        e.preventDefault();
-        setShowConfig(!showConfig);
-    };
+    const [storageInitialized, setStorageInitialized] = useState(false);
+    const [storageError, setStorageError] = useState<string | null>(null);
+    const [showSettings, setShowSettings] = useState(false);
 
-    const handleInitialize = async () => {
+    const handleStorageInit = async () => {
         try {
             await initializeStorage();
-            setStorageState({
-                isInitialized: true,
-                error: null,
-                hasPermission: true
-            });
+            setStorageInitialized(true);
+            setStorageError(null);
         } catch (error) {
-            console.error('Storage initialization error:', error);
-            const errorMessage = error instanceof Error && error.name === 'NotAllowedError'
-                ? 'Permission to access file system was denied. Please try again.'
-                : 'Failed to initialize storage system. Please try again.';
-
-            setStorageState({
-                isInitialized: false,
-                error: errorMessage,
-                hasPermission: false
-            });
+            const message = error instanceof Error && error.name === 'NotAllowedError'
+                ? 'Permission denied. Please try again and allow file system access.'
+                : 'Failed to initialize storage. Please refresh and try again.';
+            setStorageError(message);
         }
     };
 
+    // Load all messages when user logs in
     useEffect(() => {
-        const loadAllMessages = async () => {
-            if (!currentUserId || isLoadingMessages) return;
-
-            setIsLoadingMessages(true);
-            try {
-                await dispatch(initializeAllMessagesAsync(currentUserId)).unwrap();
-            } catch (error) {
-                console.error('Error loading all messages:', error);
-            } finally {
-                setIsLoadingMessages(false);
-            }
-        };
-
-        loadAllMessages();
+        if (currentUserId) {
+            dispatch(initializeAllMessagesAsync(currentUserId));
+        }
     }, [currentUserId, dispatch]);
 
-    return (
-        <div className="app-container">
-            <button
-                onClick={toggleConfig}
-                className="config-button"
-            >
-                ⚙️
-            </button>
+    // Initial storage setup screen
+    if (!storageInitialized) {
+        return (
+            <div className="app-container">
+                <div className="app-main">
+                    <div className="card fade-in">
+                        <h1 className="card-title">Welcome to SecureChat</h1>
+                        <p className="text-center text-muted mb-lg">
+                            A peer-to-peer encrypted chat application
+                        </p>
 
-            {showConfig && (
-                <div className="config-overlay">
-                    <div className="config-content">
+                        {storageError && (
+                            <div className="alert alert-error mb-md">
+                                <span>⚠️</span>
+                                <span>{storageError}</span>
+                            </div>
+                        )}
+
+                        <p className="text-center mb-lg">
+                            To begin, we need to set up local storage for your messages.
+                            Your data stays on your device.
+                        </p>
+
                         <button
-                            onClick={toggleConfig}
-                            className="close-button"
+                            onClick={handleStorageInit}
+                            className="btn btn-primary"
                         >
-                            ✕
+                            Initialize Storage
                         </button>
-                        <ServerConfig />
                     </div>
                 </div>
-            )}
-
-            <div className="main-content">
-                {!storageState.isInitialized ? (
-                    <InitializationScreen
-                        error={storageState.error}
-                        onInitialize={handleInitialize}
-                    />
-                ) : !currentUserId ? (
-                    <UserSetup />
-                ) : (
-                    <WebSocketManager>
-                        <WebRTCManager>
-                            <div className="content-wrapper">
-                                <UserMenu />
-                                {!connectedToUser ? (
-                                    <ConnectUser />
-                                ) : (
-                                    <>
-                                        <DataManager />
-                                        <Chat />
-                                    </>
-                                )}
-                            </div>
-                        </WebRTCManager>
-                    </WebSocketManager>
-                )}
             </div>
-        </div>
+        );
+    }
+
+    // User setup screen
+    if (!currentUserId) {
+        return (
+            <div className="app-container">
+                <div className="app-main">
+                    <UserManager mode="setup" />
+                </div>
+            </div>
+        );
+    }
+
+    // Main app with WebSocket and WebRTC
+    return (
+        <WebSocketManager>
+            <WebRTCManager>
+                <div className="app-container">
+                    <header className="app-header">
+                        <UserManager mode="menu" />
+                        <button
+                            onClick={() => setShowSettings(!showSettings)}
+                            className="btn btn-icon"
+                            title="Settings"
+                        >
+                            ⚙️
+                        </button>
+                    </header>
+
+                    <main className="app-main">
+                        {!connectedToUser ? (
+                            <UserManager mode="connect" />
+                        ) : (
+                            <Chat />
+                        )}
+                    </main>
+
+                    {showSettings && (
+                        <div className="modal-overlay" onClick={() => setShowSettings(false)}>
+                            <div className="modal" onClick={(e) => e.stopPropagation()}>
+                                <div className="mb-lg">
+                                    <h2 className="card-title">Settings</h2>
+                                    <button
+                                        onClick={() => setShowSettings(false)}
+                                        className="btn btn-icon"
+                                        style={{ position: 'absolute', top: '1rem', right: '1rem' }}
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                                <DataManager />
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </WebRTCManager>
+        </WebSocketManager>
     );
 };
 
-export const App = () => (
+export const App: React.FC = () => (
     <Provider store={store}>
         <AppContent />
     </Provider>
