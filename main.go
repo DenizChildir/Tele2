@@ -327,18 +327,38 @@ func handleWebSocket(c *websocket.Conn) {
 		}
 
 		// First try to determine the message type
-		var msgType MessageType
-		if err := json.Unmarshal(rawMessage, &msgType); err == nil {
-			if msgType.MessageType == "webrtc_signaling" {
-				var signalingMsg SignalingMessage
-				if err := json.Unmarshal(rawMessage, &signalingMsg); err != nil {
-					log.Printf("Error parsing signaling message: %v", err)
-					continue
+		// FIRST: Check if this is a WebRTC signaling message and handle immediately
+		var signalingCheck map[string]interface{}
+		if err := json.Unmarshal(rawMessage, &signalingCheck); err == nil {
+			if messageType, exists := signalingCheck["messageType"]; exists {
+				if messageType == "webrtc_signaling" {
+					log.Printf("Processing WebRTC signaling message from %s", userID)
+
+					// Parse as signaling message
+					var signalingMsg map[string]interface{}
+					if err := json.Unmarshal(rawMessage, &signalingMsg); err == nil {
+						// Get target ID
+						if toId, exists := signalingMsg["toId"].(string); exists {
+							log.Printf("Forwarding WebRTC signaling to %s", toId)
+
+							clientsMux.RLock()
+							targetClient, targetExists := clients[toId]
+							clientsMux.RUnlock()
+
+							if targetExists && targetClient.IsOnline {
+								// Forward the raw message directly
+								if err := targetClient.Conn.WriteMessage(websocket.TextMessage, rawMessage); err != nil {
+									log.Printf("Error forwarding WebRTC signaling: %v", err)
+								} else {
+									log.Printf("Successfully forwarded WebRTC signaling to %s", toId)
+								}
+							} else {
+								log.Printf("Target client %s not available for WebRTC signaling", toId)
+							}
+						}
+					}
+					continue // Skip all other message processing for WebRTC messages
 				}
-				log.Printf("Processing WebRTC signaling message type %s from %s to %s",
-					signalingMsg.Type, signalingMsg.FromID, signalingMsg.ToID)
-				handleSignalingMessage(signalingMsg)
-				continue
 			}
 		}
 

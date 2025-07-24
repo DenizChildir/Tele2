@@ -1,4 +1,4 @@
-// WebSocketManager.tsx
+// Updated WebSocketManager.tsx
 import React, { useEffect, useRef, useCallback, createContext, useContext } from 'react';
 import { useAppDispatch, useAppSelector } from '../hooks/redux';
 import {
@@ -8,7 +8,7 @@ import {
 } from '../store/messageSlice';
 import { MessageProcessor } from '../service/messageProcessor';
 import { Message } from '../types/types';
-import {config} from "../config";
+import { config } from "../config";
 
 interface WebSocketContextType {
     ws: WebSocket | null;
@@ -33,7 +33,6 @@ export const WebSocketManager: React.FC<WebSocketManagerProps> = ({ children }) 
     const MAX_RETRIES = 3;
     const retryCountRef = useRef(0);
     const reconnectTimeoutRef = useRef<TimeoutHandle>();
-
 
     // Process pending messages
     const processPendingMessages = useCallback(() => {
@@ -79,6 +78,7 @@ export const WebSocketManager: React.FC<WebSocketManagerProps> = ({ children }) 
             const message = JSON.parse(event.data);
             console.log('Received message:', message);
 
+            // Handle status updates
             if (message.content === 'status_update') {
                 dispatch(setUserOnlineStatus({
                     userId: message.fromId,
@@ -87,6 +87,14 @@ export const WebSocketManager: React.FC<WebSocketManagerProps> = ({ children }) 
                 return;
             }
 
+            // Check if this is a WebRTC signaling message
+            if (message.messageType === 'webrtc_signaling') {
+                // WebRTC messages are handled by WebRTCManager via event listeners
+                // Just pass them through - don't process as chat messages
+                return;
+            }
+
+            // Handle regular chat messages
             try {
                 await messageProcessorRef.current?.processIncomingMessage(message);
             } catch (error) {

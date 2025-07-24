@@ -1,3 +1,4 @@
+// Updated Chat.tsx - Fixed file handling section
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '../hooks/redux';
 import { useWebSocket } from './WebSocketManager';
@@ -21,11 +22,12 @@ export const Chat: React.FC = () => {
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [isFileTransferring, setIsFileTransferring] = useState(false);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { ws, messageProcessor } = useWebSocket();
-    const { sendFile, isConnected: isPeerConnected } = useWebRTC();
+    const { sendFile, isConnected: isPeerConnected, createConnection } = useWebRTC();
 
     const isUserOnline = connectedToUser ? users[connectedToUser]?.online : false;
 
@@ -117,56 +119,109 @@ export const Chat: React.FC = () => {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        if ((!messageText.trim() && !selectedFile) || !connectedToUser || !messageProcessor) {
+        if ((!messageText.trim() && !selectedFile) || !connectedToUser) {
             return;
         }
 
+        setError(null);
+
         try {
-            let content: MessageContent | string;
-
             if (selectedFile) {
-                if (!isPeerConnected(connectedToUser)) {
-                    throw new Error('Peer connection required for file transfer');
-                }
-
-                await sendFile(connectedToUser, selectedFile);
-
-                const fileType: MessageContentType =
-                    selectedFile.type.startsWith('image/') ? 'image' :
-                        selectedFile.type.startsWith('video/') ? 'video' : 'file';
-
-                content = {
-                    type: fileType,
-                    file: {
-                        name: selectedFile.name,
-                        size: selectedFile.size,
-                        type: selectedFile.type,
-                        lastModified: selectedFile.lastModified
-                    }
-                };
-
-                setSelectedFile(null);
-                if (fileInputRef.current) fileInputRef.current.value = '';
+                // Handle file transfer via WebRTC
+                await handleFileTransfer();
             } else {
-                content = messageText.trim();
+                // Handle regular text message
+                await handleTextMessage();
+            }
+        } catch (error) {
+            console.error('Error in handleSubmit:', error);
+            setError(error instanceof Error ? error.message : 'Failed to send message');
+        }
+    };
+
+    const handleTextMessage = async () => {
+        if (!messageProcessor || !currentUserId || !connectedToUser) {
+            throw new Error('Missing required components for text message');
+        }
+
+        const content = messageText.trim();
+        const message: Message = {
+            id: crypto.randomUUID(),
+            fromId: currentUserId,
+            toId: connectedToUser,
+            content,
+            timestamp: new Date().toISOString(),
+            delivered: false,
+            readStatus: false,
+            status: 'sent'
+        };
+
+        await messageProcessor.sendMessage(message);
+        setMessageText('');
+    };
+
+    const handleFileTransfer = async () => {
+        if (!selectedFile || !currentUserId || !connectedToUser) {
+            throw new Error('Missing required components for file transfer');
+        }
+
+        setIsFileTransferring(true);
+
+        try {
+            // First, create/ensure WebRTC connection
+            if (!isPeerConnected(connectedToUser)) {
+                console.log('Creating WebRTC connection for file transfer...');
+                const connected = await createConnection(connectedToUser);
+                if (!connected) {
+                    throw new Error('Failed to establish WebRTC connection for file transfer');
+                }
             }
 
-            const message: Message = {
-                id: crypto.randomUUID(),
-                fromId: currentUserId!,
-                toId: connectedToUser,
-                content,
-                timestamp: new Date().toISOString(),
-                delivered: false,
-                readStatus: false,
-                status: 'sent'
+            // Send file via WebRTC
+            console.log('Sending file via WebRTC...');
+            await sendFile(connectedToUser, selectedFile);
+
+            // Create a chat message to represent the file transfer
+            const fileType: MessageContentType =
+                selectedFile.type.startsWith('image/') ? 'image' :
+                    selectedFile.type.startsWith('video/') ? 'video' : 'file';
+
+            const content: MessageContent = {
+                type: fileType,
+                file: {
+                    name: selectedFile.name,
+                    size: selectedFile.size,
+                    type: selectedFile.type,
+                    lastModified: selectedFile.lastModified
+                }
             };
 
-            await messageProcessor.sendMessage(message);
-            setMessageText('');
-            setError(null);
+            // Send a regular chat message to represent the file
+            if (messageProcessor) {
+                const fileMessage: Message = {
+                    id: crypto.randomUUID(),
+                    fromId: currentUserId,
+                    toId: connectedToUser,
+                    content,
+                    timestamp: new Date().toISOString(),
+                    delivered: false,
+                    readStatus: false,
+                    status: 'sent'
+                };
+
+                await messageProcessor.sendMessage(fileMessage);
+            }
+
+            // Clear the selected file
+            setSelectedFile(null);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+
+            console.log('File transfer completed successfully');
         } catch (error) {
-            setError('Failed to send message');
+            console.error('File transfer failed:', error);
+            throw new Error(`File transfer failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setIsFileTransferring(false);
         }
     };
 
@@ -222,6 +277,12 @@ export const Chat: React.FC = () => {
                 <div className="status">
                     <span className={`status-dot status-${isConnected ? 'online' : 'offline'}`}></span>
                     <span>Connection</span>
+                    {connectedToUser && isPeerConnected(connectedToUser) && (
+                        <div className="status ml-2">
+                            <span className="status-dot status-online"></span>
+                            <span>WebRTC</span>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -254,9 +315,9 @@ export const Chat: React.FC = () => {
                                 <span>{formatTime(message.timestamp)}</span>
                                 {message.fromId === currentUserId && (
                                     <span className="message-status">
-                    {message.status === 'read' ? '✓✓✓' :
-                        message.status === 'delivered' ? '✓✓' : '✓'}
-                  </span>
+                                        {message.status === 'read' ? '✓✓✓' :
+                                            message.status === 'delivered' ? '✓✓' : '✓'}
+                                    </span>
                                 )}
                             </div>
                         </div>
@@ -270,6 +331,13 @@ export const Chat: React.FC = () => {
                     <div className="alert alert-error mb-md">
                         <span>⚠️</span>
                         <span>{error}</span>
+                    </div>
+                )}
+
+                {isFileTransferring && (
+                    <div className="alert alert-success mb-md">
+                        <span>📤</span>
+                        <span>Transferring file via WebRTC...</span>
                     </div>
                 )}
 
@@ -301,6 +369,7 @@ export const Chat: React.FC = () => {
                         onChange={handleFileSelect}
                         className="hidden"
                         id="file-input"
+                        disabled={isFileTransferring}
                     />
                     <label htmlFor="file-input" className="btn btn-icon">
                         📎
@@ -312,15 +381,15 @@ export const Chat: React.FC = () => {
                         onChange={(e) => setMessageText(e.target.value)}
                         placeholder={isConnected ? "Type a message..." : "Connecting..."}
                         className="input"
-                        disabled={!isConnected}
+                        disabled={!isConnected || isFileTransferring}
                     />
 
                     <button
                         type="submit"
-                        disabled={!isConnected || (!messageText.trim() && !selectedFile)}
+                        disabled={!isConnected || (!messageText.trim() && !selectedFile) || isFileTransferring}
                         className="btn btn-primary"
                     >
-                        Send
+                        {isFileTransferring ? 'Sending...' : 'Send'}
                     </button>
                 </form>
             </div>
