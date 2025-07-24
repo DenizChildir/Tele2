@@ -1,5 +1,5 @@
 // types.ts
-export type MessageContentType = 'text' | 'file' | 'image' | 'video';
+export type MessageContentType = 'text' | 'file' | 'image' | 'video' | 'audio';
 export type SignalingType = 'offer' | 'answer' | 'ice-candidate';
 
 export interface FileMetadata {

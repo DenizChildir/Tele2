@@ -1,4 +1,4 @@
-// Updated Chat.tsx - Fixed file handling section
+// Updated Chat.tsx - Now with file preview support
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '../hooks/redux';
 import { useWebSocket } from './WebSocketManager';
@@ -9,6 +9,7 @@ import {
     initializeMessagesAsync
 } from '../store/messageSlice';
 import { Message, MessageContent, MessageContentType } from '../types/types';
+import { FilePreview } from './FilePreview';
 
 export const Chat: React.FC = () => {
     const dispatch = useAppDispatch();
@@ -27,7 +28,7 @@ export const Chat: React.FC = () => {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { ws, messageProcessor } = useWebSocket();
-    const { sendFile, isConnected: isPeerConnected, createConnection } = useWebRTC();
+    const { sendFile, isConnected: isPeerConnected, createConnection, getFileUrl } = useWebRTC();
 
     const isUserOnline = connectedToUser ? users[connectedToUser]?.online : false;
 
@@ -177,14 +178,15 @@ export const Chat: React.FC = () => {
                 }
             }
 
-            // Send file via WebRTC
+            // Send file via WebRTC and get the message ID
             console.log('Sending file via WebRTC...');
-            await sendFile(connectedToUser, selectedFile);
+            const messageId = await sendFile(connectedToUser, selectedFile);
 
             // Create a chat message to represent the file transfer
             const fileType: MessageContentType =
                 selectedFile.type.startsWith('image/') ? 'image' :
-                    selectedFile.type.startsWith('video/') ? 'video' : 'file';
+                    selectedFile.type.startsWith('video/') ? 'video' :
+                        selectedFile.type.startsWith('audio/') ? 'audio' : 'file';
 
             const content: MessageContent = {
                 type: fileType,
@@ -196,10 +198,10 @@ export const Chat: React.FC = () => {
                 }
             };
 
-            // Send a regular chat message to represent the file
+            // Send a regular chat message to represent the file with the same ID
             if (messageProcessor) {
                 const fileMessage: Message = {
-                    id: crypto.randomUUID(),
+                    id: messageId, // Use the same ID returned from sendFile
                     fromId: currentUserId,
                     toId: connectedToUser,
                     content,
@@ -232,33 +234,65 @@ export const Chat: React.FC = () => {
         });
     };
 
-    const renderMessageContent = (content: MessageContent | string) => {
+    const renderMessageContent = (message: Message) => {
+        const content = message.content as MessageContent | string;
+
         if (typeof content === 'string') {
             return <span>{content}</span>;
         }
 
-        if (content.type === 'file' || content.type === 'image' || content.type === 'video') {
+        if (content.type === 'file' || content.type === 'image' || content.type === 'video' || content.type === 'audio') {
             const file = content.file;
             if (!file) return <span>Invalid file</span>;
 
-            const formatSize = (bytes: number) => {
-                if (bytes < 1024) return bytes + ' B';
-                if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-                return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-            };
+            // Check if we have the file URL from WebRTC (for both sent and received files)
+            const fileUrl = getFileUrl(message.id);
 
-            const icon = content.type === 'image' ? '📷' :
-                content.type === 'video' ? '🎥' : '📄';
-
-            return (
-                <div className="file-preview">
-                    <span className="file-icon">{icon}</span>
-                    <div className="file-info">
-                        <div className="file-name">{file.name}</div>
-                        <div className="file-size">{formatSize(file.size)}</div>
+            if (fileUrl) {
+                // We have the actual file - show preview
+                const isIncoming = message.fromId !== currentUserId;
+                return (
+                    <div>
+                        <FilePreview
+                            file={{
+                                url: fileUrl,
+                                name: file.name,
+                                type: file.type,
+                                size: file.size
+                            }}
+                            isIncoming={isIncoming}
+                        />
+                        {isIncoming && (
+                            <div className="file-auto-download-notice">
+                                ✓ Auto-downloaded to your downloads folder
+                            </div>
+                        )}
                     </div>
-                </div>
-            );
+                );
+            } else {
+                // File data not available yet (still transferring or loading)
+                const formatSize = (bytes: number) => {
+                    if (bytes < 1024) return bytes + ' B';
+                    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+                    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+                };
+
+                const icon = content.type === 'image' ? '📷' :
+                    content.type === 'video' ? '🎥' :
+                        content.type === 'audio' ? '🎵' : '📄';
+
+                return (
+                    <div className="file-preview">
+                        <span className="file-icon">{icon}</span>
+                        <div className="file-info">
+                            <div className="file-name">{file.name}</div>
+                            <div className="file-size">
+                                {message.fromId === currentUserId ? 'Sending...' : 'Receiving...'}
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
         }
 
         return <span>Unsupported message type</span>;
@@ -309,7 +343,7 @@ export const Chat: React.FC = () => {
                                     ? 'message-bubble-outgoing'
                                     : 'message-bubble-incoming'
                             }`}>
-                                {renderMessageContent(message.content as MessageContent | string)}
+                                {renderMessageContent(message)}
                             </div>
                             <div className="message-meta">
                                 <span>{formatTime(message.timestamp)}</span>

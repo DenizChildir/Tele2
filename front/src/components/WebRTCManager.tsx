@@ -1,8 +1,10 @@
-// Fixed WebRTCManager.tsx
+// Updated WebRTCManager.tsx - Now stores files instead of auto-downloading
 import React, { createContext, useContext, useRef, useEffect, useState } from 'react';
-import { useAppSelector } from '../hooks/redux';
+import { useAppSelector, useAppDispatch } from '../hooks/redux';
 import { useWebSocket } from './WebSocketManager';
 import { FileTransferService, FileTransferMetadata } from '../service/FileTransferService';
+import { addMessageAsync } from '../store/messageSlice';
+import { Message, MessageContent } from '../types/types';
 
 interface SignalingMessage {
     messageType: 'webrtc_signaling';
@@ -20,12 +22,20 @@ interface FileTransferState {
     status: 'pending' | 'transferring' | 'completed' | 'error';
 }
 
+interface ReceivedFile {
+    file: File;
+    url: string;
+    timestamp: string;
+}
+
 interface WebRTCContextType {
     createConnection: (peerId: string) => Promise<boolean>;
     closeConnection: (peerId: string) => void;
-    sendFile: (peerId: string, file: File) => Promise<void>;
+    sendFile: (peerId: string, file: File) => Promise<string>;
     isConnected: (peerId: string) => boolean;
     transfers: Map<string, FileTransferState>;
+    receivedFiles: Map<string, ReceivedFile>;
+    getFileUrl: (messageId: string) => string | undefined;
 }
 
 interface PeerConnectionData {
@@ -39,9 +49,11 @@ interface PeerConnectionData {
 const WebRTCContext = createContext<WebRTCContextType>({
     createConnection: async () => false,
     closeConnection: () => {},
-    sendFile: async () => {},
+    sendFile: async () => '',
     isConnected: () => false,
-    transfers: new Map()
+    transfers: new Map(),
+    receivedFiles: new Map(),
+    getFileUrl: () => undefined
 });
 
 export const useWebRTC = () => {
@@ -54,10 +66,12 @@ export const useWebRTC = () => {
 
 export const WebRTCManager: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const { ws } = useWebSocket();
+    const dispatch = useAppDispatch();
     const currentUserId = useAppSelector(state => state.messages.currentUserId);
     const peerConnections = useRef<Map<string, PeerConnectionData>>(new Map());
     const fileTransferService = useRef(new FileTransferService());
     const [transfers, setTransfers] = useState<Map<string, FileTransferState>>(new Map());
+    const [receivedFiles, setReceivedFiles] = useState<Map<string, ReceivedFile>>(new Map());
 
     // ICE server configuration - optimized for local testing
     const configuration: RTCConfiguration = {
@@ -67,7 +81,7 @@ export const WebRTCManager: React.FC<{ children: React.ReactNode }> = ({ childre
             { urls: 'stun:stun2.l.google.com:19302' }
         ],
         iceCandidatePoolSize: 10,
-        iceTransportPolicy: 'all', // Allow both relay and host candidates
+        iceTransportPolicy: 'all',
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require'
     };
@@ -90,7 +104,8 @@ export const WebRTCManager: React.FC<{ children: React.ReactNode }> = ({ childre
 
         return () => {
             ws.removeEventListener('message', handleWebSocketMessage);
-            // Cleanup all connections
+            // Cleanup all connections and object URLs
+            receivedFiles.forEach(({ url }) => URL.revokeObjectURL(url));
             peerConnections.current.forEach((_, peerId) => {
                 closeConnection(peerId);
             });
@@ -174,7 +189,7 @@ export const WebRTCManager: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const setupDataChannel = (dataChannel: RTCDataChannel, peerId: string) => {
         let receivedChunks: Blob[] = [];
-        let currentFileInfo: { name: string, type: string, size: number } | null = null;
+        let currentFileInfo: { name: string, type: string, size: number, transferId: string, messageId: string } | null = null;
 
         dataChannel.binaryType = 'arraybuffer';
 
@@ -199,7 +214,9 @@ export const WebRTCManager: React.FC<{ children: React.ReactNode }> = ({ childre
                             currentFileInfo = {
                                 name: message.name,
                                 type: message.fileType,
-                                size: message.size
+                                size: message.size,
+                                transferId: message.transferId,
+                                messageId: message.messageId
                             };
                             receivedChunks = [];
                             updateTransferState(message.transferId || 'unknown', {
@@ -214,20 +231,65 @@ export const WebRTCManager: React.FC<{ children: React.ReactNode }> = ({ childre
                                 const file = new File(receivedChunks, currentFileInfo.name, {
                                     type: currentFileInfo.type
                                 });
-                                console.log(`[WebRTC] File received: ${file.name}`);
 
-                                // DOWNLOAD THE FILE - This was missing!
+                                // Create object URL for the file preview
                                 const url = URL.createObjectURL(file);
+
+                                // Store the received file with its message ID for preview
+                                setReceivedFiles(prev => {
+                                    const newFiles = new Map(prev);
+                                    newFiles.set(currentFileInfo!.messageId, {
+                                        file,
+                                        url,
+                                        timestamp: new Date().toISOString()
+                                    });
+                                    return newFiles;
+                                });
+
+                                console.log(`[WebRTC] File stored with ID: ${currentFileInfo.messageId}`);
+
+                                // AUTO-DOWNLOAD THE FILE
+                                const downloadUrl = URL.createObjectURL(file);
                                 const a = document.createElement('a');
-                                a.href = url;
+                                a.href = downloadUrl;
                                 a.download = file.name;
                                 a.style.display = 'none';
                                 document.body.appendChild(a);
                                 a.click();
                                 document.body.removeChild(a);
-                                URL.revokeObjectURL(url);
+                                URL.revokeObjectURL(downloadUrl);
 
-                                console.log(`[WebRTC] File download triggered: ${file.name}`);
+                                console.log(`[WebRTC] File auto-downloaded: ${file.name}`);
+
+                                // Create a message for the received file
+                                if (currentUserId) {
+                                    const fileType = currentFileInfo.type.startsWith('image/') ? 'image' :
+                                        currentFileInfo.type.startsWith('video/') ? 'video' :
+                                            currentFileInfo.type.startsWith('audio/') ? 'audio' : 'file';
+
+                                    const content: MessageContent = {
+                                        type: fileType,
+                                        file: {
+                                            name: file.name,
+                                            size: file.size,
+                                            type: file.type,
+                                            lastModified: file.lastModified
+                                        }
+                                    };
+
+                                    const fileMessage: Message = {
+                                        id: currentFileInfo.messageId,
+                                        fromId: peerId,
+                                        toId: currentUserId,
+                                        content,
+                                        timestamp: new Date().toISOString(),
+                                        delivered: true,
+                                        readStatus: false,
+                                        status: 'delivered'
+                                    };
+
+                                    await dispatch(addMessageAsync(fileMessage));
+                                }
 
                                 updateTransferState(message.transferId || 'unknown', {
                                     status: 'completed',
@@ -454,15 +516,29 @@ export const WebRTCManager: React.FC<{ children: React.ReactNode }> = ({ childre
 
         try {
             const transferId = crypto.randomUUID();
+            const messageId = crypto.randomUUID();
             updateTransferState(transferId, { status: 'transferring', progress: 0 });
 
-            // Send file start message
+            // Store the sent file for preview
+            const url = URL.createObjectURL(file);
+            setReceivedFiles(prev => {
+                const newFiles = new Map(prev);
+                newFiles.set(messageId, {
+                    file,
+                    url,
+                    timestamp: new Date().toISOString()
+                });
+                return newFiles;
+            });
+
+            // Send file start message with message ID
             peerData.dataChannel.send(JSON.stringify({
                 type: 'file-start',
                 name: file.name,
                 fileType: file.type,
                 size: file.size,
-                transferId
+                transferId,
+                messageId
             }));
 
             // Send file in chunks
@@ -499,11 +575,15 @@ export const WebRTCManager: React.FC<{ children: React.ReactNode }> = ({ childre
             // Send file end message
             peerData.dataChannel.send(JSON.stringify({
                 type: 'file-end',
-                transferId
+                transferId,
+                messageId
             }));
 
             updateTransferState(transferId, { status: 'completed', progress: 100 });
             console.log('[WebRTC] File transfer completed');
+
+            // Return the message ID so the chat can use it
+            return messageId;
         } catch (error) {
             console.error('[WebRTC] Error sending file:', error);
             throw error;
@@ -523,12 +603,19 @@ export const WebRTCManager: React.FC<{ children: React.ReactNode }> = ({ childre
         });
     };
 
+    const getFileUrl = (messageId: string): string | undefined => {
+        const receivedFile = receivedFiles.get(messageId);
+        return receivedFile?.url;
+    };
+
     const contextValue = {
         createConnection,
         closeConnection,
         sendFile,
         isConnected,
-        transfers
+        transfers,
+        receivedFiles,
+        getFileUrl
     };
 
     return (
