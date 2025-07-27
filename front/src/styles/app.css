@@ -270,6 +270,7 @@ body {
   display: grid;
   justify-items: start;
   gap: var(--space-xs);
+  position: relative;
 }
 
 .message-outgoing {
@@ -800,6 +801,217 @@ body {
 
 .message-bubble-outgoing .file-preview-download:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+/* ===========================
+   REPLY FEATURE STYLES
+   =========================== */
+
+/* Reply Context */
+.reply-context {
+  padding: var(--space-sm);
+  margin-bottom: var(--space-xs);
+  background: var(--gray-100);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.reply-context:hover {
+  background: var(--gray-200);
+}
+
+.message-bubble-outgoing .reply-context {
+  background: rgba(255, 255, 255, 0.15);
+  border-left-color: rgba(255, 255, 255, 0.8);
+}
+
+.message-bubble-outgoing .reply-context:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.reply-context-header {
+  font-weight: 600;
+  color: var(--primary);
+  margin-bottom: 2px;
+}
+
+.message-bubble-outgoing .reply-context-header {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.reply-context-content {
+  color: var(--gray-700);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
+}
+
+.message-bubble-outgoing .reply-context-content {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.reply-context-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.reply-context-file-icon {
+  font-size: 1rem;
+}
+
+/* Reply Actions */
+.message-actions {
+  position: absolute;
+  top: -30px;
+  right: 0;
+  display: none;
+  background: white;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-xs);
+}
+
+.message:hover .message-actions {
+  display: block;
+}
+
+.message-outgoing .message-actions {
+  left: 0;
+  right: auto;
+}
+
+.reply-button {
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--gray-600);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.reply-button:hover {
+  background: var(--gray-100);
+  color: var(--primary);
+}
+
+/* Reply Input Bar */
+.reply-input-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--gray-100);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-sm);
+  font-size: 0.875rem;
+}
+
+.reply-input-content {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1;
+  overflow: hidden;
+}
+
+.reply-input-text {
+  color: var(--gray-700);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-input-user {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.reply-cancel-button {
+  padding: var(--space-xs);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--gray-500);
+  transition: all 0.2s;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.reply-cancel-button:hover {
+  background: var(--gray-200);
+  color: var(--gray-700);
+}
+
+/* Reply Thread Indicator */
+.reply-thread-line {
+  position: absolute;
+  left: -20px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--gray-300);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.message.reply-highlighted .reply-thread-line {
+  opacity: 1;
+  background: var(--primary);
+}
+
+/* Scroll to Reply Animation */
+@keyframes highlightReply {
+  0% {
+    background-color: transparent;
+  }
+  50% {
+    background-color: rgba(37, 99, 235, 0.1);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.message.reply-highlighted {
+  animation: highlightReply 1.5s ease-out;
+}
+
+/* Mobile Responsive Adjustments for Reply Feature */
+@media (max-width: 768px) {
+  .reply-context {
+    font-size: 0.8rem;
+    padding: var(--space-xs);
+  }
+
+  .reply-context-content {
+    max-width: 200px;
+  }
+
+  .message-actions {
+    top: -25px;
+    padding: 2px;
+  }
+
+  .reply-button {
+    font-size: 0.8rem;
+    padding: 2px var(--space-xs);
+  }
+
+  .reply-input-bar {
+    font-size: 0.8rem;
+    padding: var(--space-xs) var(--space-sm);
+  }
 }
 
 /* ===========================

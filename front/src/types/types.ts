@@ -23,6 +23,14 @@ export interface SignalingContent {
     candidate?: RTCIceCandidateInit;
 }
 
+// New interface for reply metadata
+export interface ReplyMetadata {
+    messageId: string;
+    fromId: string;
+    content: MessageContent | SignalingContent | string;
+    timestamp: string;
+}
+
 export interface Message {
     id: string;
     fromId: string;
@@ -33,4 +41,5 @@ export interface Message {
     readStatus: boolean;
     status: 'sent' | 'delivered' | 'read';
     type?: SignalingType; // For backward compatibility with stored messages
+    replyTo?: ReplyMetadata; // New field for reply information
 }

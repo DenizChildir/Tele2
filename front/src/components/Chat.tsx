@@ -1,4 +1,4 @@
-// Updated Chat.tsx - Now with file preview support
+// Updated Chat.tsx - Now with reply feature support
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '../hooks/redux';
 import { useWebSocket } from './WebSocketManager';
@@ -8,7 +8,7 @@ import {
     setMessageRead,
     initializeMessagesAsync
 } from '../store/messageSlice';
-import { Message, MessageContent, MessageContentType } from '../types/types';
+import { Message, MessageContent, MessageContentType, ReplyMetadata } from '../types/types';
 import { FilePreview } from './FilePreview';
 
 export const Chat: React.FC = () => {
@@ -24,9 +24,12 @@ export const Chat: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [isFileTransferring, setIsFileTransferring] = useState(false);
+    const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+    const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const { ws, messageProcessor } = useWebSocket();
     const { sendFile, isConnected: isPeerConnected, createConnection, getFileUrl } = useWebRTC();
 
@@ -117,6 +120,36 @@ export const Chat: React.FC = () => {
         }
     };
 
+    const handleReply = (message: Message) => {
+        setReplyingTo(message);
+    };
+
+    const cancelReply = () => {
+        setReplyingTo(null);
+    };
+
+    const scrollToMessage = (messageId: string) => {
+        const messageElement = messageRefs.current.get(messageId);
+        if (messageElement) {
+            messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            setHighlightedMessageId(messageId);
+            setTimeout(() => setHighlightedMessageId(null), 1500);
+        }
+    };
+
+    const getReplyPreviewText = (message: Message): string => {
+        const content = message.content;
+        if (typeof content === 'string') {
+            return content;
+        }
+        if (content && typeof content === 'object' && 'type' in content) {
+            const msgContent = content as MessageContent;
+            if (msgContent.text) return msgContent.text;
+            if (msgContent.file) return msgContent.file.name;
+        }
+        return 'Message';
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
@@ -134,6 +167,9 @@ export const Chat: React.FC = () => {
                 // Handle regular text message
                 await handleTextMessage();
             }
+
+            // Clear reply after sending
+            setReplyingTo(null);
         } catch (error) {
             console.error('Error in handleSubmit:', error);
             setError(error instanceof Error ? error.message : 'Failed to send message');
@@ -154,7 +190,13 @@ export const Chat: React.FC = () => {
             timestamp: new Date().toISOString(),
             delivered: false,
             readStatus: false,
-            status: 'sent'
+            status: 'sent',
+            replyTo: replyingTo ? {
+                messageId: replyingTo.id,
+                fromId: replyingTo.fromId,
+                content: replyingTo.content,
+                timestamp: replyingTo.timestamp
+            } : undefined
         };
 
         await messageProcessor.sendMessage(message);
@@ -208,7 +250,13 @@ export const Chat: React.FC = () => {
                     timestamp: new Date().toISOString(),
                     delivered: false,
                     readStatus: false,
-                    status: 'sent'
+                    status: 'sent',
+                    replyTo: replyingTo ? {
+                        messageId: replyingTo.id,
+                        fromId: replyingTo.fromId,
+                        content: replyingTo.content,
+                        timestamp: replyingTo.timestamp
+                    } : undefined
                 };
 
                 await messageProcessor.sendMessage(fileMessage);
@@ -234,68 +282,118 @@ export const Chat: React.FC = () => {
         });
     };
 
+    const renderReplyContext = (replyTo: ReplyMetadata) => {
+        const content = replyTo.content;
+        let displayText = '';
+        let isFile = false;
+        let fileIcon = '📎';
+
+        if (typeof content === 'string') {
+            displayText = content;
+        } else if (content && typeof content === 'object' && 'type' in content) {
+            const msgContent = content as MessageContent;
+            isFile = true;
+
+            if (msgContent.type === 'image') fileIcon = '📷';
+            else if (msgContent.type === 'video') fileIcon = '🎥';
+            else if (msgContent.type === 'audio') fileIcon = '🎵';
+
+            displayText = msgContent.file?.name || 'File';
+        }
+
+        return (
+            <div
+                className="reply-context"
+                onClick={() => scrollToMessage(replyTo.messageId)}
+            >
+                <div className="reply-context-header">
+                    {replyTo.fromId === currentUserId ? 'You' : replyTo.fromId}
+                </div>
+                <div className="reply-context-content">
+                    {isFile ? (
+                        <div className="reply-context-file">
+                            <span className="reply-context-file-icon">{fileIcon}</span>
+                            <span>{displayText}</span>
+                        </div>
+                    ) : (
+                        displayText
+                    )}
+                </div>
+            </div>
+        );
+    };
+
     const renderMessageContent = (message: Message) => {
         const content = message.content as MessageContent | string;
 
-        if (typeof content === 'string') {
-            return <span>{content}</span>;
-        }
+        const messageContentElement = () => {
+            if (typeof content === 'string') {
+                return <span>{content}</span>;
+            }
 
-        if (content.type === 'file' || content.type === 'image' || content.type === 'video' || content.type === 'audio') {
-            const file = content.file;
-            if (!file) return <span>Invalid file</span>;
+            if (content.type === 'file' || content.type === 'image' || content.type === 'video' || content.type === 'audio') {
+                const file = content.file;
+                if (!file) return <span>Invalid file</span>;
 
-            // Check if we have the file URL from WebRTC (for both sent and received files)
-            const fileUrl = getFileUrl(message.id);
+                // Check if we have the file URL from WebRTC (for both sent and received files)
+                const fileUrl = getFileUrl(message.id);
 
-            if (fileUrl) {
-                // We have the actual file - show preview
-                const isIncoming = message.fromId !== currentUserId;
-                return (
-                    <div>
-                        <FilePreview
-                            file={{
-                                url: fileUrl,
-                                name: file.name,
-                                type: file.type,
-                                size: file.size
-                            }}
-                            isIncoming={isIncoming}
-                        />
-                        {isIncoming && (
-                            <div className="file-auto-download-notice">
-                                ✓ Auto-downloaded to your downloads folder
-                            </div>
-                        )}
-                    </div>
-                );
-            } else {
-                // File data not available yet (still transferring or loading)
-                const formatSize = (bytes: number) => {
-                    if (bytes < 1024) return bytes + ' B';
-                    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-                    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-                };
+                if (fileUrl) {
+                    // We have the actual file - show preview
+                    const isIncoming = message.fromId !== currentUserId;
+                    return (
+                        <div>
+                            <FilePreview
+                                file={{
+                                    url: fileUrl,
+                                    name: file.name,
+                                    type: file.type,
+                                    size: file.size
+                                }}
+                                isIncoming={isIncoming}
+                            />
+                            {isIncoming && (
+                                <div className="file-auto-download-notice">
+                                    ✓ Auto-downloaded to your downloads folder
+                                </div>
+                            )}
+                        </div>
+                    );
+                } else {
+                    // File data not available yet (still transferring or loading)
+                    const formatSize = (bytes: number) => {
+                        if (bytes < 1024) return bytes + ' B';
+                        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+                        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+                    };
 
-                const icon = content.type === 'image' ? '📷' :
-                    content.type === 'video' ? '🎥' :
-                        content.type === 'audio' ? '🎵' : '📄';
+                    const icon = content.type === 'image' ? '📷' :
+                        content.type === 'video' ? '🎥' :
+                            content.type === 'audio' ? '🎵' : '📄';
 
-                return (
-                    <div className="file-preview">
-                        <span className="file-icon">{icon}</span>
-                        <div className="file-info">
-                            <div className="file-name">{file.name}</div>
-                            <div className="file-size">
-                                {message.fromId === currentUserId ? 'Sending...' : 'Receiving...'}
+                    return (
+                        <div className="file-preview">
+                            <span className="file-icon">{icon}</span>
+                            <div className="file-info">
+                                <div className="file-name">{file.name}</div>
+                                <div className="file-size">
+                                    {message.fromId === currentUserId ? 'Sending...' : 'Receiving...'}
+                                </div>
                             </div>
                         </div>
-                    </div>
-                );
+                    );
+                }
             }
-        }
 
-        return <span>Unsupported message type</span>;
+            return <span>Unsupported message type</span>;
+        };
+
+        return (
+            <>
+                {message.replyTo && renderReplyContext(message.replyTo)}
+                {messageContentElement()}
+            </>
+        );
     };
 
     return (
@@ -334,10 +432,24 @@ export const Chat: React.FC = () => {
                     conversationMessages.map(message => (
                         <div
                             key={message.id}
+                            ref={el => {
+                                if (el) messageRefs.current.set(message.id, el);
+                            }}
                             className={`message ${
                                 message.fromId === currentUserId ? 'message-outgoing' : ''
-                            }`}
+                            } ${highlightedMessageId === message.id ? 'reply-highlighted' : ''}`}
+                            style={{ position: 'relative' }}
                         >
+                            <div className="message-actions">
+                                <button
+                                    className="reply-button"
+                                    onClick={() => handleReply(message)}
+                                    title="Reply"
+                                >
+                                    <span>↩️</span>
+                                    <span>Reply</span>
+                                </button>
+                            </div>
                             <div className={`message-bubble ${
                                 message.fromId === currentUserId
                                     ? 'message-bubble-outgoing'
@@ -372,6 +484,27 @@ export const Chat: React.FC = () => {
                     <div className="alert alert-success mb-md">
                         <span>📤</span>
                         <span>Transferring file via WebRTC...</span>
+                    </div>
+                )}
+
+                {replyingTo && (
+                    <div className="reply-input-bar">
+                        <div className="reply-input-content">
+                            <span>↩️</span>
+                            <span className="reply-input-user">
+                                {replyingTo.fromId === currentUserId ? 'You' : replyingTo.fromId}:
+                            </span>
+                            <span className="reply-input-text">
+                                {getReplyPreviewText(replyingTo)}
+                            </span>
+                        </div>
+                        <button
+                            onClick={cancelReply}
+                            className="reply-cancel-button"
+                            title="Cancel reply"
+                        >
+                            ✕
+                        </button>
                     </div>
                 )}
 

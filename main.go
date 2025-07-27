@@ -39,16 +39,25 @@ type SignalingMessage struct {
 	Candidate interface{} `json:"candidate,omitempty"`
 }
 
+// ReplyMetadata represents the reply information
+type ReplyMetadata struct {
+	MessageID string      `json:"messageId"`
+	FromID    string      `json:"fromId"`
+	Content   interface{} `json:"content"`
+	Timestamp time.Time   `json:"timestamp"`
+}
+
 // Message represents a chat message
 type Message struct {
-	ID         string      `json:"id"`
-	FromID     string      `json:"fromId"`
-	ToID       string      `json:"toId"`
-	Content    interface{} `json:"content"` // Can be string or MessageContent
-	Timestamp  time.Time   `json:"timestamp"`
-	Delivered  bool        `json:"delivered"`
-	ReadStatus bool        `json:"readStatus"`
-	Status     string      `json:"status"`
+	ID         string         `json:"id"`
+	FromID     string         `json:"fromId"`
+	ToID       string         `json:"toId"`
+	Content    interface{}    `json:"content"` // Can be string or MessageContent
+	Timestamp  time.Time      `json:"timestamp"`
+	Delivered  bool           `json:"delivered"`
+	ReadStatus bool           `json:"readStatus"`
+	Status     string         `json:"status"`
+	ReplyTo    *ReplyMetadata `json:"replyTo,omitempty"` // New field for reply information
 }
 
 // Client represents a connected websocket client
@@ -148,6 +157,7 @@ func main() {
 		}
 	}
 }
+
 func getMessageContentString(content interface{}) string {
 	switch v := content.(type) {
 	case string:
@@ -161,6 +171,7 @@ func getMessageContentString(content interface{}) string {
 		return ""
 	}
 }
+
 func initDB() {
 	var err error
 	db, err = sql.Open("sqlite3", "./messages.db")
@@ -178,12 +189,20 @@ func initDB() {
         timestamp DATETIME,
         delivered BOOLEAN,
         read_status BOOLEAN,
-        status TEXT DEFAULT 'sent'
+        status TEXT DEFAULT 'sent',
+        reply_to TEXT DEFAULT NULL
     );`
 
 	_, err = db.Exec(createTableSQL)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// Add migration to add reply_to column to existing tables
+	_, err = db.Exec("ALTER TABLE messages ADD COLUMN reply_to TEXT DEFAULT NULL")
+	if err != nil {
+		// Column might already exist, ignore the error
+		log.Printf("Column reply_to might already exist: %v", err)
 	}
 }
 
@@ -232,7 +251,7 @@ func handleGetAllMessages(c *fiber.Ctx) error {
 	userID := c.Params("userId")
 
 	query := `
-    SELECT id, from_id, to_id, content, timestamp, delivered, read_status
+    SELECT id, from_id, to_id, content, timestamp, delivered, read_status, reply_to
     FROM messages
     WHERE from_id = ? OR to_id = ?
     ORDER BY timestamp ASC
@@ -249,6 +268,7 @@ func handleGetAllMessages(c *fiber.Ctx) error {
 	var messages []Message
 	for rows.Next() {
 		var msg Message
+		var replyToJSON sql.NullString
 		err := rows.Scan(
 			&msg.ID,
 			&msg.FromID,
@@ -257,10 +277,20 @@ func handleGetAllMessages(c *fiber.Ctx) error {
 			&msg.Timestamp,
 			&msg.Delivered,
 			&msg.ReadStatus,
+			&replyToJSON,
 		)
 		if err != nil {
 			continue
 		}
+
+		// Parse reply_to if it exists
+		if replyToJSON.Valid {
+			var replyTo ReplyMetadata
+			if err := json.Unmarshal([]byte(replyToJSON.String), &replyTo); err == nil {
+				msg.ReplyTo = &replyTo
+			}
+		}
+
 		messages = append(messages, msg)
 	}
 
@@ -469,7 +499,7 @@ func broadcastUserStatus(userID string, online bool) {
 
 func sendAllMessages(userID string) {
 	query := `
-    SELECT id, from_id, to_id, content, timestamp, delivered, read_status
+    SELECT id, from_id, to_id, content, timestamp, delivered, read_status, reply_to
     FROM messages
     WHERE from_id = ? OR to_id = ?
     ORDER BY timestamp ASC
@@ -511,6 +541,7 @@ func sendAllMessages(userID string) {
 
 	for rows.Next() {
 		var msg Message
+		var replyToJSON sql.NullString
 		err := rows.Scan(
 			&msg.ID,
 			&msg.FromID,
@@ -519,10 +550,19 @@ func sendAllMessages(userID string) {
 			&msg.Timestamp,
 			&msg.Delivered,
 			&msg.ReadStatus,
+			&replyToJSON,
 		)
 		if err != nil {
 			log.Printf("Error scanning message: %v", err)
 			continue
+		}
+
+		// Parse reply_to if it exists
+		if replyToJSON.Valid {
+			var replyTo ReplyMetadata
+			if err := json.Unmarshal([]byte(replyToJSON.String), &replyTo); err == nil {
+				msg.ReplyTo = &replyTo
+			}
 		}
 
 		// Send message to user
@@ -587,6 +627,7 @@ func sendCurrentOnlineUsers(newClient *Client) {
 		}
 	}
 }
+
 func updateMessageStatus(messageID string, delivered bool, read bool) {
 	query := `
     UPDATE messages 
@@ -655,9 +696,18 @@ func storeMessage(msg Message) {
 		}
 	}
 
+	// Convert ReplyTo to JSON string if it exists
+	var replyToJSON sql.NullString
+	if msg.ReplyTo != nil {
+		replyToBytes, err := json.Marshal(msg.ReplyTo)
+		if err == nil {
+			replyToJSON = sql.NullString{String: string(replyToBytes), Valid: true}
+		}
+	}
+
 	query := `
-        INSERT INTO messages (id, from_id, to_id, content, timestamp, delivered, read_status, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO messages (id, from_id, to_id, content, timestamp, delivered, read_status, status, reply_to)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
 
 	_, err := db.Exec(query,
@@ -669,6 +719,7 @@ func storeMessage(msg Message) {
 		msg.Delivered,
 		msg.ReadStatus,
 		msg.Status,
+		replyToJSON,
 	)
 
 	if err != nil {
@@ -679,7 +730,7 @@ func storeMessage(msg Message) {
 func sendOfflineMessages(userID string) {
 	// First, get all undelivered messages
 	query := `
-    SELECT id, from_id, to_id, content, timestamp, delivered, read_status
+    SELECT id, from_id, to_id, content, timestamp, delivered, read_status, reply_to
     FROM messages
     WHERE to_id = ? AND delivered = false
     `
@@ -716,6 +767,7 @@ func sendOfflineMessages(userID string) {
 
 	for rows.Next() {
 		var msg Message
+		var replyToJSON sql.NullString
 		err := rows.Scan(
 			&msg.ID,
 			&msg.FromID,
@@ -724,10 +776,19 @@ func sendOfflineMessages(userID string) {
 			&msg.Timestamp,
 			&msg.Delivered,
 			&msg.ReadStatus,
+			&replyToJSON,
 		)
 		if err != nil {
 			log.Printf("Error scanning message: %v", err)
 			continue
+		}
+
+		// Parse reply_to if it exists
+		if replyToJSON.Valid {
+			var replyTo ReplyMetadata
+			if err := json.Unmarshal([]byte(replyToJSON.String), &replyTo); err == nil {
+				msg.ReplyTo = &replyTo
+			}
 		}
 
 		// Send stored message to now-online user
