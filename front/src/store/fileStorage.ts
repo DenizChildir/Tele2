@@ -2,6 +2,7 @@
 import { Message } from "../types/types";
 import type { FileSystemDirectoryHandle } from '../types/fileSystemTypes';
 import {config} from "../config";
+
 export interface StoredUser {
     id: string;
     lastActive: string;
@@ -18,7 +19,6 @@ interface StorageStructure {
     recentContacts: { [userId: string]: RecentContact[] };
 }
 
-
 class FileSystemStorage {
     private baseDirectory: FileSystemDirectoryHandle | null = null;
     private cachedData: StorageStructure = {
@@ -26,6 +26,7 @@ class FileSystemStorage {
         users: [],
         recentContacts: {}
     };
+    private fileCache: Map<string, string> = new Map(); // Cache for blob URLs
 
     async initialize(): Promise<void> {
         if (this.baseDirectory) return;
@@ -45,11 +46,13 @@ class FileSystemStorage {
             throw new Error('Failed to initialize file system storage');
         }
     }
+
     private createMessageKey(fromId: string, toId: string): string {
         // Sort IDs to ensure consistent filename regardless of sender/receiver order
         const ids = [fromId, toId].sort();
         return `msg_${ids[0]}_to_${ids[1]}`;
     }
+
     private parseMessageKey(filename: string): { fromId: string, toId: string } | null {
         const match = filename.match(/^msg_(.+)_to_(.+)\.json$/);
         if (!match) return null;
@@ -59,7 +62,6 @@ class FileSystemStorage {
         };
     }
 
-
     private async ensureDirectoryStructure() {
         if (!this.baseDirectory) return;
 
@@ -68,6 +70,7 @@ class FileSystemStorage {
             await this.getOrCreateDirectory('messages');
             await this.getOrCreateDirectory('users');
             await this.getOrCreateDirectory('contacts');
+            await this.getOrCreateDirectory('files'); // New directory for file storage
         } catch (error) {
             console.error('Error creating directory structure:', error);
         }
@@ -76,6 +79,97 @@ class FileSystemStorage {
     private async getOrCreateDirectory(name: string): Promise<FileSystemDirectoryHandle> {
         if (!this.baseDirectory) throw new Error('Storage not initialized');
         return await this.baseDirectory.getDirectoryHandle(name, { create: true });
+    }
+
+    // New method to save file data
+    async saveFileData(messageId: string, file: File): Promise<void> {
+        if (!this.baseDirectory) throw new Error('Storage not initialized');
+
+        try {
+            const filesDir = await this.getOrCreateDirectory('files');
+
+            // Create a unique filename using messageId and original filename
+            const fileExt = file.name.split('.').pop() || 'bin';
+            const storedFileName = `${messageId}.${fileExt}`;
+
+            // Save the actual file
+            const fileHandle = await filesDir.getFileHandle(storedFileName, { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(file);
+            await writable.close();
+
+            // Also save metadata
+            const metadataFileName = `${messageId}.meta.json`;
+            const metadata = {
+                originalName: file.name,
+                type: file.type,
+                size: file.size,
+                lastModified: file.lastModified,
+                storedFileName: storedFileName
+            };
+
+            const metaHandle = await filesDir.getFileHandle(metadataFileName, { create: true });
+            const metaWritable = await metaHandle.createWritable();
+            await metaWritable.write(JSON.stringify(metadata, null, 2));
+            await metaWritable.close();
+
+            console.log(`Saved file data for message ${messageId}: ${file.name}`);
+        } catch (error) {
+            console.error('Error saving file data:', error);
+            throw error;
+        }
+    }
+
+    // New method to retrieve file data
+    async getFileData(messageId: string): Promise<{ file: File; url: string } | null> {
+        if (!this.baseDirectory) throw new Error('Storage not initialized');
+
+        // Check cache first
+        if (this.fileCache.has(messageId)) {
+            return {
+                file: null as any, // We don't keep the file object in cache
+                url: this.fileCache.get(messageId)!
+            };
+        }
+
+        try {
+            const filesDir = await this.getOrCreateDirectory('files');
+
+            // First get metadata
+            const metadataFileName = `${messageId}.meta.json`;
+            const metaHandle = await filesDir.getFileHandle(metadataFileName);
+            const metaFile = await metaHandle.getFile();
+            const metadataText = await metaFile.text();
+            const metadata = JSON.parse(metadataText);
+
+            // Then get the actual file
+            const fileHandle = await filesDir.getFileHandle(metadata.storedFileName);
+            const file = await fileHandle.getFile();
+
+            // Create a new File object with the original name
+            const restoredFile = new File([file], metadata.originalName, {
+                type: metadata.type,
+                lastModified: metadata.lastModified
+            });
+
+            // Create blob URL and cache it
+            const url = URL.createObjectURL(restoredFile);
+            this.fileCache.set(messageId, url);
+
+            return {
+                file: restoredFile,
+                url
+            };
+        } catch (error) {
+            console.log(`No stored file found for message ${messageId}`);
+            return null;
+        }
+    }
+
+    // Clean up blob URLs when they're no longer needed
+    cleanupFileCache() {
+        this.fileCache.forEach(url => URL.revokeObjectURL(url));
+        this.fileCache.clear();
     }
 
     private async loadCachedData() {
@@ -249,8 +343,12 @@ class FileSystemStorage {
 
         // Get all message files for this user
         const messagesDir = await this.getOrCreateDirectory('messages');
+        const filesDir = await this.getOrCreateDirectory('files');
 
         try {
+            // Collect message IDs that belong to this user
+            const userMessageIds = new Set<string>();
+
             // List all files in messages directory
             for await (const entry of messagesDir.values()) {
                 if (entry.kind === 'file' && entry.name.endsWith('.json')) {
@@ -258,10 +356,33 @@ class FileSystemStorage {
                     if (entry.name.includes(`msg_${userId}_to_`) ||
                         entry.name.includes(`_to_${userId}.json`)) {
                         try {
+                            // Load messages to get their IDs for file cleanup
+                            const fileHandle = await messagesDir.getFileHandle(entry.name);
+                            const file = await fileHandle.getFile();
+                            const content = await file.text();
+                            const messages: Message[] = JSON.parse(content);
+                            messages.forEach(msg => userMessageIds.add(msg.id));
+
                             await messagesDir.removeEntry(entry.name);
                             console.log(`Successfully deleted file: ${entry.name}`);
                         } catch (error) {
                             console.error(`Error deleting file ${entry.name}:`, error);
+                        }
+                    }
+                }
+            }
+
+            // Delete associated files
+            for await (const entry of filesDir.values()) {
+                if (entry.kind === 'file') {
+                    // Check if this file belongs to any of the user's messages
+                    const messageId = entry.name.split('.')[0];
+                    if (userMessageIds.has(messageId)) {
+                        try {
+                            await filesDir.removeEntry(entry.name);
+                            console.log(`Deleted file data: ${entry.name}`);
+                        } catch (error) {
+                            console.error(`Error deleting file data ${entry.name}:`, error);
                         }
                     }
                 }
@@ -281,12 +402,14 @@ class FileSystemStorage {
                 JSON.stringify(this.cachedData.recentContacts)
             );
 
+            // Clear file cache for this user
+            this.cleanupFileCache();
+
         } catch (error) {
             console.error('Error deleting user data:', error);
             throw new Error('Failed to delete user data');
         }
     }
-
 
     async deleteContactHistory(userId: string, contactId: string): Promise<void> {
         // First, delete from the backend
@@ -303,10 +426,22 @@ class FileSystemStorage {
             throw error;
         }
 
-
         // Then proceed with local cleanup
         const messageKey = this.createMessageKey(userId, contactId);
         const filename = `${messageKey}.json`;
+
+        // Get message IDs before deleting
+        const messageIds = new Set<string>();
+        try {
+            const messagesDir = await this.getOrCreateDirectory('messages');
+            const fileHandle = await messagesDir.getFileHandle(filename);
+            const file = await fileHandle.getFile();
+            const content = await file.text();
+            const messages: Message[] = JSON.parse(content);
+            messages.forEach(msg => messageIds.add(msg.id));
+        } catch (error) {
+            console.log('No messages file found to get IDs from');
+        }
 
         // Remove from cache
         const cacheKey1 = `${userId}:${contactId}`;
@@ -316,6 +451,8 @@ class FileSystemStorage {
 
         // Delete local files
         const messagesDir = await this.getOrCreateDirectory('messages');
+        const filesDir = await this.getOrCreateDirectory('files');
+
         try {
             await messagesDir.removeEntry(filename);
 
@@ -325,6 +462,21 @@ class FileSystemStorage {
                 await messagesDir.removeEntry(filename2);
             } catch (error) {
                 // Ignore error if reverse file doesn't exist
+            }
+
+            // Delete associated file data
+            for await (const entry of filesDir.values()) {
+                if (entry.kind === 'file') {
+                    const messageId = entry.name.split('.')[0];
+                    if (messageIds.has(messageId)) {
+                        try {
+                            await filesDir.removeEntry(entry.name);
+                            console.log(`Deleted file data: ${entry.name}`);
+                        } catch (error) {
+                            console.error(`Error deleting file data ${entry.name}:`, error);
+                        }
+                    }
+                }
             }
 
             // Update recent contacts
@@ -355,8 +507,11 @@ class FileSystemStorage {
                 recentContacts: {}
             };
 
+            // Clean up blob URLs
+            this.cleanupFileCache();
+
             // Delete all files in each directory
-            for (const dir of ['messages', 'users', 'contacts']) {
+            for (const dir of ['messages', 'users', 'contacts', 'files']) {
                 const dirHandle = await this.getOrCreateDirectory(dir);
                 for await (const entry of dirHandle.values()) {
                     await dirHandle.removeEntry(entry.name);
@@ -435,8 +590,6 @@ const fileStorage = new FileSystemStorage();
 
 export type { RecentContact};
 
-
-
 // Export wrapper functions that handle initialization
 export const initializeStorage = () => fileStorage.initialize();
 
@@ -483,6 +636,21 @@ export const saveRecentContact = async (currentUserId: string, contactId: string
 export const getRecentContacts = async (userId: string) => {
     await fileStorage.initialize();
     return fileStorage.getRecentContacts(userId);
+};
+
+// New file storage functions
+export const saveFileData = async (messageId: string, file: File) => {
+    await fileStorage.initialize();
+    return fileStorage.saveFileData(messageId, file);
+};
+
+export const getFileData = async (messageId: string) => {
+    await fileStorage.initialize();
+    return fileStorage.getFileData(messageId);
+};
+
+export const cleanupFileCache = () => {
+    fileStorage.cleanupFileCache();
 };
 
 // Keep the generateShortId function as is

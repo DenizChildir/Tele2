@@ -10,6 +10,7 @@ import {
 } from '../store/messageSlice';
 import { Message, MessageContent, MessageContentType, ReplyMetadata } from '../types/types';
 import { FilePreview } from './FilePreview';
+import { getFileData } from '../store/fileStorage';
 
 export const Chat: React.FC = () => {
     const dispatch = useAppDispatch();
@@ -26,6 +27,7 @@ export const Chat: React.FC = () => {
     const [isFileTransferring, setIsFileTransferring] = useState(false);
     const [replyingTo, setReplyingTo] = useState<Message | null>(null);
     const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+    const [fileUrlCache, setFileUrlCache] = useState<Map<string, string>>(new Map());
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -54,6 +56,29 @@ export const Chat: React.FC = () => {
         return (msg.fromId === currentUserId && msg.toId === connectedToUser) ||
             (msg.fromId === connectedToUser && msg.toId === currentUserId);
     });
+
+    // Load file URLs for messages when component mounts or messages change
+    useEffect(() => {
+        const loadFileUrls = async () => {
+            for (const message of conversationMessages) {
+                const content = message.content as MessageContent | string;
+                if (typeof content === 'object' && content && 'file' in content) {
+                    // Check if we already have the URL from WebRTC
+                    let url = getFileUrl(message.id);
+
+                    // If not, try to load from persistent storage
+                    if (!url && !fileUrlCache.has(message.id)) {
+                        const fileData = await getFileData(message.id);
+                        if (fileData) {
+                            setFileUrlCache(prev => new Map(prev).set(message.id, fileData.url));
+                        }
+                    }
+                }
+            }
+        };
+
+        loadFileUrls();
+    }, [conversationMessages, getFileUrl]);
 
     // Load messages on mount
     useEffect(() => {
@@ -336,7 +361,7 @@ export const Chat: React.FC = () => {
                 if (!file) return <span>Invalid file</span>;
 
                 // Check if we have the file URL from WebRTC (for both sent and received files)
-                const fileUrl = getFileUrl(message.id);
+                const fileUrl = getFileUrl(message.id) || fileUrlCache.get(message.id);
 
                 if (fileUrl) {
                     // We have the actual file - show preview

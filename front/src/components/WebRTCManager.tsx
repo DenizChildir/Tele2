@@ -1,10 +1,11 @@
-// Updated WebRTCManager.tsx - Now stores files instead of auto-downloading
+// Updated WebRTCManager.tsx - Now stores files persistently
 import React, { createContext, useContext, useRef, useEffect, useState } from 'react';
 import { useAppSelector, useAppDispatch } from '../hooks/redux';
 import { useWebSocket } from './WebSocketManager';
 import { FileTransferService, FileTransferMetadata } from '../service/FileTransferService';
 import { addMessageAsync } from '../store/messageSlice';
 import { Message, MessageContent } from '../types/types';
+import { saveFileData, getFileData } from '../store/fileStorage';
 
 interface SignalingMessage {
     messageType: 'webrtc_signaling';
@@ -85,6 +86,17 @@ export const WebRTCManager: React.FC<{ children: React.ReactNode }> = ({ childre
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require'
     };
+
+    // Load persisted file URLs on mount
+    useEffect(() => {
+        const loadPersistedFiles = async () => {
+            // This will be called when the component mounts to check for any persisted files
+            // The actual loading happens in the Chat component when it needs specific files
+            console.log('[WebRTC] WebRTCManager initialized, file persistence ready');
+        };
+
+        loadPersistedFiles();
+    }, []);
 
     useEffect(() => {
         if (!ws) return;
@@ -245,6 +257,14 @@ export const WebRTCManager: React.FC<{ children: React.ReactNode }> = ({ childre
                                     });
                                     return newFiles;
                                 });
+
+                                // Save file to persistent storage
+                                try {
+                                    await saveFileData(currentFileInfo.messageId, file);
+                                    console.log(`[WebRTC] File saved to persistent storage: ${currentFileInfo.messageId}`);
+                                } catch (error) {
+                                    console.error('[WebRTC] Error saving file to persistent storage:', error);
+                                }
 
                                 console.log(`[WebRTC] File stored with ID: ${currentFileInfo.messageId}`);
 
@@ -530,6 +550,14 @@ export const WebRTCManager: React.FC<{ children: React.ReactNode }> = ({ childre
                 });
                 return newFiles;
             });
+
+            // Save the sent file to persistent storage as well
+            try {
+                await saveFileData(messageId, file);
+                console.log(`[WebRTC] Sent file saved to persistent storage: ${messageId}`);
+            } catch (error) {
+                console.error('[WebRTC] Error saving sent file to persistent storage:', error);
+            }
 
             // Send file start message with message ID
             peerData.dataChannel.send(JSON.stringify({
