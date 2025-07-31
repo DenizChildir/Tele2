@@ -1,4 +1,4 @@
-// Updated Chat.tsx - Now with reply feature support
+// Updated Chat.tsx - Now with reply feature and contact switcher support
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '../hooks/redux';
 import { useWebSocket } from './WebSocketManager';
@@ -11,6 +11,7 @@ import {
 import { Message, MessageContent, MessageContentType, ReplyMetadata } from '../types/types';
 import { FilePreview } from './FilePreview';
 import { getFileData } from '../store/fileStorage';
+import { ContactSwitcher } from './ContactSwitcher';
 
 export const Chat: React.FC = () => {
     const dispatch = useAppDispatch();
@@ -28,6 +29,7 @@ export const Chat: React.FC = () => {
     const [replyingTo, setReplyingTo] = useState<Message | null>(null);
     const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
     const [fileUrlCache, setFileUrlCache] = useState<Map<string, string>>(new Map());
+    const [showContactSwitcher, setShowContactSwitcher] = useState(false);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -424,11 +426,20 @@ export const Chat: React.FC = () => {
     return (
         <div className="chat-container">
             <div className="chat-header">
-                <div className="chat-user-info">
-                    <span>Chat with: <strong>{connectedToUser}</strong></span>
-                    <div className="status">
-                        <span className={`status-dot status-${isUserOnline ? 'online' : 'offline'}`}></span>
-                        <span>{isUserOnline ? 'Online' : 'Offline'}</span>
+                <div className="chat-header-left">
+                    <button
+                        onClick={() => setShowContactSwitcher(!showContactSwitcher)}
+                        className="btn btn-icon contact-switcher-toggle"
+                        title="Show contacts"
+                    >
+                        <span className="contact-switcher-icon">💬</span>
+                    </button>
+                    <div className="chat-user-info">
+                        <span>Chat with: <strong>{connectedToUser}</strong></span>
+                        <div className="status">
+                            <span className={`status-dot status-${isUserOnline ? 'online' : 'offline'}`}></span>
+                            <span>{isUserOnline ? 'Online' : 'Offline'}</span>
+                        </div>
                     </div>
                 </div>
                 <div className="status">
@@ -442,6 +453,11 @@ export const Chat: React.FC = () => {
                     )}
                 </div>
             </div>
+
+            <ContactSwitcher
+                isOpen={showContactSwitcher}
+                onClose={() => setShowContactSwitcher(false)}
+            />
 
             <div className="chat-messages">
                 {isLoading ? (

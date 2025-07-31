@@ -76,6 +76,39 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+.app-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.app-unread-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--danger);
+  color: white;
+  border-radius: var(--radius-full);
+  font-size: 0.875rem;
+  font-weight: 600;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+.app-unread-icon {
+  font-size: 1rem;
+}
+
+.app-unread-count {
+  min-width: 20px;
+  text-align: center;
+}
+
 .app-main {
   display: grid;
   place-items: center;
@@ -222,6 +255,7 @@ body {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
+  position: relative;
 }
 
 .chat-header {
@@ -231,6 +265,12 @@ body {
   padding: var(--space-md) var(--space-lg);
   background: var(--gray-50);
   border-bottom: 1px solid var(--gray-200);
+}
+
+.chat-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
 }
 
 .chat-user-info {
@@ -260,6 +300,168 @@ body {
   grid-template-columns: auto 1fr auto;
   gap: var(--space-sm);
   align-items: center;
+}
+
+/* ===========================
+   CONTACT SWITCHER
+   =========================== */
+
+.contact-switcher {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 320px;
+  background: white;
+  border-right: 1px solid var(--gray-200);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.contact-switcher-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--gray-200);
+  background: var(--gray-50);
+}
+
+.contact-switcher-header h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--gray-900);
+}
+
+.contact-switcher-list {
+  overflow-y: auto;
+  background: white;
+}
+
+.contact-switcher-empty {
+  padding: var(--space-xl);
+}
+
+.contact-switcher-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  cursor: pointer;
+  transition: background-color 0.2s;
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.contact-switcher-item:hover {
+  background-color: var(--gray-50);
+}
+
+.contact-switcher-item-active {
+  background-color: var(--primary);
+  color: white;
+}
+
+.contact-switcher-item-active:hover {
+  background-color: var(--primary-hover);
+}
+
+.contact-switcher-item-main {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-sm);
+  overflow: hidden;
+}
+
+.contact-switcher-item-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1;
+  overflow: hidden;
+}
+
+.contact-switcher-item-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contact-switcher-item-active .contact-switcher-item-name {
+  color: white;
+}
+
+.contact-switcher-item-time {
+  font-size: 0.75rem;
+  color: var(--gray-500);
+  white-space: nowrap;
+}
+
+.contact-switcher-item-active .contact-switcher-item-time {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.contact-switcher-unread-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-xs);
+  background: var(--danger);
+  color: white;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: var(--space-sm);
+}
+
+.contact-switcher-toggle {
+  background: var(--gray-100);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+  transition: all 0.2s;
+}
+
+.contact-switcher-toggle:hover {
+  background: var(--gray-200);
+}
+
+.contact-switcher-icon {
+  font-size: 1.25rem;
+}
+
+/* Contact switcher scrollbar styling */
+.contact-switcher-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.contact-switcher-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.contact-switcher-list::-webkit-scrollbar-thumb {
+  background: var(--gray-300);
+  border-radius: var(--radius-full);
+}
+
+.contact-switcher-list::-webkit-scrollbar-thumb:hover {
+  background: var(--gray-400);
 }
 
 /* ===========================
@@ -1062,6 +1264,36 @@ body {
 
   .file-preview-container {
     max-width: 250px;
+  }
+
+  /* Contact switcher mobile styles */
+  .contact-switcher {
+    width: 280px;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .contact-switcher-header {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .contact-switcher-item {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .chat-header-left {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .chat-user-info {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .chat-user-info > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 

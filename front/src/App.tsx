@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Provider } from 'react-redux';
 import { store } from './store/store';
 import { useAppSelector, useAppDispatch } from './hooks/redux';
@@ -15,10 +15,46 @@ const AppContent: React.FC = () => {
     const dispatch = useAppDispatch();
     const currentUserId = useAppSelector(state => state.messages.currentUserId);
     const connectedToUser = useAppSelector(state => state.messages.connectedToUser);
+    const messages = useAppSelector(state => state.messages.messages);
 
     const [storageInitialized, setStorageInitialized] = useState(false);
     const [storageError, setStorageError] = useState<string | null>(null);
     const [showSettings, setShowSettings] = useState(false);
+
+    // Calculate total unread count
+    const totalUnreadCount = useMemo(() => {
+        if (!currentUserId) return 0;
+
+        let unreadCount = 0;
+        const contactUnreadMap = new Map<string, number>();
+
+        messages.forEach(msg => {
+            // Skip non-chat messages
+            if (!msg.content ||
+                msg.content === 'delivered' ||
+                msg.content === 'read' ||
+                msg.content === 'status_update' ||
+                (typeof msg.content === 'object' && 'type' in msg.content &&
+                    ['offer', 'answer', 'ice-candidate'].includes((msg.content as any).type))) {
+                return;
+            }
+
+            // Count unread messages from other users
+            if (msg.fromId !== currentUserId && msg.toId === currentUserId && !msg.readStatus) {
+                const currentCount = contactUnreadMap.get(msg.fromId) || 0;
+                contactUnreadMap.set(msg.fromId, currentCount + 1);
+            }
+        });
+
+        // Sum up unread counts, excluding current conversation
+        contactUnreadMap.forEach((count, contactId) => {
+            if (contactId !== connectedToUser) {
+                unreadCount += count;
+            }
+        });
+
+        return unreadCount;
+    }, [messages, currentUserId, connectedToUser]);
 
     const handleStorageInit = async () => {
         try {
@@ -93,13 +129,21 @@ const AppContent: React.FC = () => {
                 <div className="app-container">
                     <header className="app-header">
                         <UserManager mode="menu" />
-                        <button
-                            onClick={() => setShowSettings(!showSettings)}
-                            className="btn btn-icon"
-                            title="Settings"
-                        >
-                            ⚙️
-                        </button>
+                        <div className="app-header-actions">
+                            {totalUnreadCount > 0 && (
+                                <div className="app-unread-badge" title={`${totalUnreadCount} unread messages`}>
+                                    <span className="app-unread-icon">💬</span>
+                                    <span className="app-unread-count">{totalUnreadCount > 99 ? '99+' : totalUnreadCount}</span>
+                                </div>
+                            )}
+                            <button
+                                onClick={() => setShowSettings(!showSettings)}
+                                className="btn btn-icon"
+                                title="Settings"
+                            >
+                                ⚙️
+                            </button>
+                        </div>
                     </header>
 
                     <main className="app-main">
