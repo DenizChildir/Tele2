@@ -12,6 +12,11 @@ import { Message, MessageContent, MessageContentType, ReplyMetadata } from '../t
 import { FilePreview } from './FilePreview';
 import { getFileData } from '../store/fileStorage';
 import { ContactSwitcher } from './ContactSwitcher';
+import { addGroupMessage, markGroupMessageAsRead } from '../store/groupSlice';
+import {GroupInfo} from "./GroupInfo";
+import { useAppSelector as useGroupSelector } from '../hooks/redux';
+import { GroupChatManager } from './GroupChatManager';
+
 
 export const Chat: React.FC = () => {
     const dispatch = useAppDispatch();
@@ -36,10 +41,15 @@ export const Chat: React.FC = () => {
     const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const { ws, messageProcessor } = useWebSocket();
     const { sendFile, isConnected: isPeerConnected, createConnection, getFileUrl } = useWebRTC();
+    const isGroupChat = connectedToUser?.startsWith('GROUP_');
+
 
     const isUserOnline = connectedToUser ? users[connectedToUser]?.online : false;
 
-    // Filter messages for current conversation
+    const groups = useGroupSelector(state => state.groups.groups);
+    const [showGroupManager, setShowGroupManager] = useState(false);
+
+
     const conversationMessages = messages.filter(msg => {
         if (!msg.content ||
             msg.content === 'delivered' ||
@@ -48,16 +58,17 @@ export const Chat: React.FC = () => {
             return false;
         }
 
-        // Check if content is a signaling message
-        if (typeof msg.content === 'object' &&
-            'type' in msg.content &&
-            ['offer', 'answer', 'ice-candidate'].includes((msg.content as any).type)) {
-            return false;
+        // For group chats
+        if (isGroupChat) {
+            return msg.toId === connectedToUser ||
+                (msg.fromId === currentUserId && msg.toId === connectedToUser);
         }
 
+        // For direct messages (existing logic)
         return (msg.fromId === currentUserId && msg.toId === connectedToUser) ||
             (msg.fromId === connectedToUser && msg.toId === currentUserId);
     });
+
 
     // Load file URLs for messages when component mounts or messages change
     useEffect(() => {
@@ -423,7 +434,10 @@ export const Chat: React.FC = () => {
         );
     };
 
+
+
     return (
+        <>
         <div className="chat-container">
             <div className="chat-header">
                 <div className="chat-header-left">
@@ -435,17 +449,22 @@ export const Chat: React.FC = () => {
                         <span className="contact-switcher-icon">💬</span>
                     </button>
                     <div className="chat-user-info">
-                        <span>Chat with: <strong>{connectedToUser}</strong></span>
-                        <div className="status">
-                            <span className={`status-dot status-${isUserOnline ? 'online' : 'offline'}`}></span>
-                            <span>{isUserOnline ? 'Online' : 'Offline'}</span>
-                        </div>
+                    <span>
+                        {isGroupChat ? 'Group: ' : 'Chat with: '}
+                        <strong>{isGroupChat && connectedToUser ? groups[connectedToUser]?.name : connectedToUser}</strong>
+                    </span>
+                        {!isGroupChat && (
+                            <div className="status">
+                                <span className={`status-dot status-${isUserOnline ? 'online' : 'offline'}`}></span>
+                                <span>{isUserOnline ? 'Online' : 'Offline'}</span>
+                            </div>
+                        )}
                     </div>
                 </div>
                 <div className="status">
                     <span className={`status-dot status-${isConnected ? 'online' : 'offline'}`}></span>
                     <span>Connection</span>
-                    {connectedToUser && isPeerConnected(connectedToUser) && (
+                    {connectedToUser && !isGroupChat && isPeerConnected(connectedToUser) && (
                         <div className="status ml-2">
                             <span className="status-dot status-online"></span>
                             <span>WebRTC</span>
@@ -454,62 +473,74 @@ export const Chat: React.FC = () => {
                 </div>
             </div>
 
+            {isGroupChat && connectedToUser && (
+                <GroupInfo
+                    groupId={connectedToUser}
+                    onManageClick={() => setShowGroupManager(true)}
+                />
+            )}
+
             <ContactSwitcher
                 isOpen={showContactSwitcher}
                 onClose={() => setShowContactSwitcher(false)}
             />
 
             <div className="chat-messages">
-                {isLoading ? (
-                    <div className="text-center text-muted">
-                        <div className="spinner"></div>
-                        <p className="mt-sm">Loading messages...</p>
-                    </div>
-                ) : conversationMessages.length === 0 ? (
-                    <div className="text-center text-muted">
-                        <p>No messages yet. Start the conversation!</p>
-                    </div>
-                ) : (
-                    conversationMessages.map(message => (
-                        <div
-                            key={message.id}
-                            ref={el => {
-                                if (el) messageRefs.current.set(message.id, el);
-                            }}
-                            className={`message ${
-                                message.fromId === currentUserId ? 'message-outgoing' : ''
-                            } ${highlightedMessageId === message.id ? 'reply-highlighted' : ''}`}
-                            style={{ position: 'relative' }}
-                        >
-                            <div className="message-actions">
-                                <button
-                                    className="reply-button"
-                                    onClick={() => handleReply(message)}
-                                    title="Reply"
-                                >
-                                    <span>↩️</span>
-                                    <span>Reply</span>
-                                </button>
+                {/* ... loading and empty states ... */}
+                {conversationMessages.map(message => (
+                    <div
+                        key={message.id}
+                        ref={el => {
+                            if (el) messageRefs.current.set(message.id, el);
+                        }}
+                        className={`message ${
+                            message.fromId === currentUserId ? 'message-outgoing' : ''
+                        } ${highlightedMessageId === message.id ? 'reply-highlighted' : ''}`}
+                        style={{ position: 'relative' }}
+                    >
+                        {message.fromId === 'system' ? (
+                            <div className="message-system">
+                                <div className="message-system-content">
+                                    {typeof message.content === 'string' ? message.content : 'System message'}
+                                </div>
                             </div>
-                            <div className={`message-bubble ${
-                                message.fromId === currentUserId
-                                    ? 'message-bubble-outgoing'
-                                    : 'message-bubble-incoming'
-                            }`}>
-                                {renderMessageContent(message)}
-                            </div>
-                            <div className="message-meta">
-                                <span>{formatTime(message.timestamp)}</span>
-                                {message.fromId === currentUserId && (
-                                    <span className="message-status">
+                        ) : (
+                            <>
+                                {isGroupChat && message.fromId !== currentUserId && (
+                                    <div className="message-group-header message-group-header-incoming">
+                                        {message.fromId}
+                                    </div>
+                                )}
+                                <div className="message-actions">
+                                    <button
+                                        className="reply-button"
+                                        onClick={() => handleReply(message)}
+                                        title="Reply"
+                                    >
+                                        <span>↩️</span>
+                                        <span>Reply</span>
+                                    </button>
+                                </div>
+                                <div className={`message-bubble ${
+                                    message.fromId === currentUserId
+                                        ? 'message-bubble-outgoing'
+                                        : 'message-bubble-incoming'
+                                }`}>
+                                    {renderMessageContent(message)}
+                                </div>
+                                <div className="message-meta">
+                                    <span>{formatTime(message.timestamp)}</span>
+                                    {message.fromId === currentUserId && (
+                                        <span className="message-status">
                                         {message.status === 'read' ? '✓✓✓' :
                                             message.status === 'delivered' ? '✓✓' : '✓'}
                                     </span>
-                                )}
-                            </div>
-                        </div>
-                    ))
-                )}
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </div>
+                ))}
                 <div ref={messagesEndRef} />
             </div>
 
@@ -602,5 +633,13 @@ export const Chat: React.FC = () => {
                 </form>
             </div>
         </div>
+    {showGroupManager && (
+        <GroupChatManager
+            isOpen={showGroupManager}
+            onClose={() => setShowGroupManager(false)}
+        />
+    )}
+</>
+
     );
 };

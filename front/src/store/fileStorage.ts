@@ -2,6 +2,7 @@
 import { Message } from "../types/types";
 import type { FileSystemDirectoryHandle } from '../types/fileSystemTypes';
 import {config} from "../config";
+import {Group, GroupMessage} from "../types/GroupTypes";
 
 export interface StoredUser {
     id: string;
@@ -20,6 +21,89 @@ interface StorageStructure {
 }
 
 class FileSystemStorage {
+
+
+    async saveGroup(group: Group): Promise<void> {
+        if (!this.baseDirectory) throw new Error('Storage not initialized');
+
+        try {
+            const groupsDir = await this.getOrCreateDirectory('groups');
+            const filename = `group_${group.id}.json`;
+
+            const fileHandle = await groupsDir.getFileHandle(filename, { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(JSON.stringify(group, null, 2));
+            await writable.close();
+
+            console.log(`Saved group: ${group.id}`);
+        } catch (error) {
+            console.error('Error saving group:', error);
+            throw error;
+        }
+    }
+
+    async saveGroupMessage(message: GroupMessage): Promise<void> {
+        if (!this.baseDirectory) throw new Error('Storage not initialized');
+
+        try {
+            const messagesDir = await this.getOrCreateDirectory('groups/messages');
+            const filename = `group_${message.groupId}_messages.json`;
+
+            let messages: GroupMessage[] = [];
+            try {
+                const fileHandle = await messagesDir.getFileHandle(filename);
+                const file = await fileHandle.getFile();
+                const content = await file.text();
+                messages = JSON.parse(content);
+            } catch {
+                // File doesn't exist yet
+            }
+
+            if (!messages.some(msg => msg.id === message.id)) {
+                messages.push(message);
+
+                const fileHandle = await messagesDir.getFileHandle(filename, { create: true });
+                const writable = await fileHandle.createWritable();
+                await writable.write(JSON.stringify(messages, null, 2));
+                await writable.close();
+            }
+        } catch (error) {
+            console.error('Error saving group message:', error);
+            throw error;
+        }
+    }
+
+    async deleteGroupData(groupId: string, userId: string): Promise<void> {
+        if (!this.baseDirectory) throw new Error('Storage not initialized');
+
+        try {
+            const groupsDir = await this.getOrCreateDirectory('groups');
+            const messagesDir = await this.getOrCreateDirectory('groups/messages');
+
+            // Remove group file
+            try {
+                await groupsDir.removeEntry(`group_${groupId}.json`);
+            } catch (error) {
+                console.log('Group file not found');
+            }
+
+            // Remove messages file
+            try {
+                await messagesDir.removeEntry(`group_${groupId}_messages.json`);
+            } catch (error) {
+                console.log('Group messages file not found');
+            }
+
+            console.log(`Deleted group data for ${groupId}`);
+        } catch (error) {
+            console.error('Error deleting group data:', error);
+            throw error;
+        }
+    }
+
+
+
+
     private baseDirectory: FileSystemDirectoryHandle | null = null;
     private cachedData: StorageStructure = {
         messages: {},
@@ -670,3 +754,37 @@ export const getAllMessages = async (userId: string) => {
     await fileStorage.initialize();
     return fileStorage.getAllMessages(userId);
 };
+
+// Add these wrapper functions at the end of fileStorage.ts:
+
+export const saveGroup = async (group: Group) => {
+    await fileStorage.initialize();
+    // For now, we'll store groups in the messages structure
+    // In production, you'd add proper group storage
+    console.log('Saving group:', group);
+};
+
+export const saveGroupMessage = async (message: GroupMessage) => {
+    await fileStorage.initialize();
+    // Convert to regular message format for storage
+    const regularMessage: Message = {
+        id: message.id,
+        fromId: message.fromId,
+        toId: message.groupId,
+        content: message.content,
+        timestamp: message.timestamp,
+        delivered: message.delivered,
+        readStatus: message.readBy.includes(message.fromId),
+        status: message.status,
+        replyTo: message.replyTo
+    };
+    return fileStorage.saveMessage(regularMessage);
+};
+
+export const deleteGroupData = async (groupId: string, userId: string) => {
+    await fileStorage.initialize();
+    // Implementation for deleting group data
+    console.log('Deleting group data:', groupId, userId);
+};
+
+

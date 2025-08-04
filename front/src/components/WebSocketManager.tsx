@@ -9,6 +9,7 @@ import {
 import { MessageProcessor } from '../service/messageProcessor';
 import { Message } from '../types/types';
 import { config } from "../config";
+import {addGroupMessage, addGroupNotification} from "../store/groupSlice";
 
 interface WebSocketContextType {
     ws: WebSocket | null;
@@ -76,9 +77,19 @@ export const WebSocketManager: React.FC<WebSocketManagerProps> = ({ children }) 
 
         ws.onmessage = async (event) => {
             const message = JSON.parse(event.data);
-            console.log('Received message:', message);
 
-            // Handle status updates
+            // Handle group notifications
+            if (message.messageType === 'group_notification') {
+                dispatch(addGroupNotification(message.data));
+                return;
+            }
+
+            // Handle WebRTC signaling (existing)
+            if (message.messageType === 'webrtc_signaling') {
+                return;
+            }
+
+            // Handle status updates (existing)
             if (message.content === 'status_update') {
                 dispatch(setUserOnlineStatus({
                     userId: message.fromId,
@@ -87,18 +98,22 @@ export const WebSocketManager: React.FC<WebSocketManagerProps> = ({ children }) 
                 return;
             }
 
-            // Check if this is a WebRTC signaling message
-            if (message.messageType === 'webrtc_signaling') {
-                // WebRTC messages are handled by WebRTCManager via event listeners
-                // Just pass them through - don't process as chat messages
-                return;
-            }
-
-            // Handle regular chat messages
-            try {
+            // Check if it's a group message
+            if (message.toId?.startsWith('GROUP_')) {
+                dispatch(addGroupMessage({
+                    id: message.id,
+                    groupId: message.toId,
+                    fromId: message.fromId,
+                    content: message.content,
+                    timestamp: message.timestamp,
+                    delivered: message.delivered,
+                    readBy: message.readStatus ? [currentUserId] : [],
+                    status: message.status,
+                    replyTo: message.replyTo
+                }));
+            } else {
+                // Handle regular direct messages
                 await messageProcessorRef.current?.processIncomingMessage(message);
-            } catch (error) {
-                console.error('Error processing message:', error);
             }
         };
 

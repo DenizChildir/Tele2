@@ -1,9 +1,12 @@
+// store.ts - Updated to include group reducer
 import { configureStore } from '@reduxjs/toolkit';
 import messageReducer from './messageSlice';
+import groupReducer from './groupSlice';
 
 export const store = configureStore({
     reducer: {
-        messages: messageReducer
+        messages: messageReducer,
+        groups: groupReducer
     }
 });
 

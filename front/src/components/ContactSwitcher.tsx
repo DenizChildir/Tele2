@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { useAppSelector, useAppDispatch } from '../hooks/redux';
 import { setConnectedUser } from '../store/messageSlice';
+import { useAppSelector as useGroupSelector } from '../hooks/redux';
 
 interface ContactSwitcherProps {
     isOpen: boolean;
@@ -13,6 +14,9 @@ export const ContactSwitcher: React.FC<ContactSwitcherProps> = ({ isOpen, onClos
     const connectedToUser = useAppSelector(state => state.messages.connectedToUser);
     const messages = useAppSelector(state => state.messages.messages);
     const users = useAppSelector(state => state.messages.users);
+
+    const groups = useGroupSelector(state => state.groups.groups);
+    const groupUnreadCounts = useGroupSelector(state => state.groups.unreadCounts);
 
     // Calculate contacts and unread counts
     const contactsWithUnread = useMemo(() => {
@@ -105,40 +109,83 @@ export const ContactSwitcher: React.FC<ContactSwitcherProps> = ({ isOpen, onClos
             </div>
 
             <div className="contact-switcher-list">
-                {contactsWithUnread.length === 0 ? (
+                {contactsWithUnread.length === 0 && Object.keys(groups).length === 0 ? (
                     <div className="contact-switcher-empty">
                         <p className="text-muted text-center">No conversations yet</p>
                     </div>
                 ) : (
-                    contactsWithUnread.map(contact => (
-                        <div
-                            key={contact.userId}
-                            onClick={() => handleContactClick(contact.userId)}
-                            className={`contact-switcher-item ${
-                                contact.userId === connectedToUser ? 'contact-switcher-item-active' : ''
-                            }`}
-                        >
-                            <div className="contact-switcher-item-main">
-                                <div className="contact-switcher-item-header">
-                                    <span className="contact-switcher-item-name">
-                                        {contact.userId}
-                                    </span>
-                                    {users[contact.userId]?.online && (
-                                        <span className="status-dot status-online" title="Online"></span>
-                                    )}
+                    <>
+                        {contactsWithUnread.length > 0 && (
+                            <>
+                                <div className="contact-switcher-section-header">
+                                    <h4>Direct Messages</h4>
                                 </div>
-                                <span className="contact-switcher-item-time">
-                                    {formatTime(contact.lastMessage)}
-                                </span>
-                            </div>
+                                {contactsWithUnread.map(contact => (
+                                    <div
+                                        key={contact.userId}
+                                        onClick={() => handleContactClick(contact.userId)}
+                                        className={`contact-switcher-item ${
+                                            contact.userId === connectedToUser ? 'contact-switcher-item-active' : ''
+                                        }`}
+                                    >
+                                        <div className="contact-switcher-item-main">
+                                            <div className="contact-switcher-item-header">
+                                            <span className="contact-switcher-item-name">
+                                                {contact.userId}
+                                            </span>
+                                                {users[contact.userId]?.online && (
+                                                    <span className="status-dot status-online" title="Online"></span>
+                                                )}
+                                            </div>
+                                            <span className="contact-switcher-item-time">
+                                            {formatTime(contact.lastMessage)}
+                                        </span>
+                                        </div>
 
-                            {contact.unreadCount > 0 && contact.userId !== connectedToUser && (
-                                <div className="contact-switcher-unread-badge">
-                                    {contact.unreadCount > 99 ? '99+' : contact.unreadCount}
+                                        {contact.unreadCount > 0 && contact.userId !== connectedToUser && (
+                                            <div className="contact-switcher-unread-badge">
+                                                {contact.unreadCount > 99 ? '99+' : contact.unreadCount}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </>
+                        )}
+
+                        {Object.keys(groups).length > 0 && (
+                            <>
+                                <div className="contact-switcher-section-header">
+                                    <h4>Groups</h4>
                                 </div>
-                            )}
-                        </div>
-                    ))
+                                {Object.values(groups).map(group => (
+                                    <div
+                                        key={group.id}
+                                        onClick={() => handleContactClick(group.id)}
+                                        className={`contact-switcher-item contact-switcher-item-group ${
+                                            group.id === connectedToUser ? 'contact-switcher-item-active' : ''
+                                        }`}
+                                    >
+                                        <div className="contact-switcher-item-main">
+                                            <div className="contact-switcher-item-header">
+                                            <span className="contact-switcher-item-name">
+                                                {group.name}
+                                            </span>
+                                            </div>
+                                            <span className="contact-switcher-item-time">
+                                            {group.lastActivity ? formatTime(group.lastActivity) : 'New'}
+                                        </span>
+                                        </div>
+
+                                        {groupUnreadCounts[group.id] > 0 && group.id !== connectedToUser && (
+                                            <div className="contact-switcher-unread-badge">
+                                                {groupUnreadCounts[group.id] > 99 ? '99+' : groupUnreadCounts[group.id]}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </>
+                        )}
+                    </>
                 )}
             </div>
         </div>

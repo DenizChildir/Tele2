@@ -10,6 +10,8 @@ import { WebRTCManager } from './components/WebRTCManager';
 import { initializeStorage } from './store/fileStorage';
 import { initializeAllMessagesAsync } from './store/messageSlice';
 import './styles/app.css'; // Single CSS file
+import { GroupChatManager } from './components/GroupChatManager';
+
 
 const AppContent: React.FC = () => {
     const dispatch = useAppDispatch();
@@ -20,6 +22,7 @@ const AppContent: React.FC = () => {
     const [storageInitialized, setStorageInitialized] = useState(false);
     const [storageError, setStorageError] = useState<string | null>(null);
     const [showSettings, setShowSettings] = useState(false);
+    const [showGroupManager, setShowGroupManager] = useState(false);
 
     // Calculate total unread count
     const totalUnreadCount = useMemo(() => {
@@ -137,6 +140,13 @@ const AppContent: React.FC = () => {
                                 </div>
                             )}
                             <button
+                                onClick={() => setShowGroupManager(!showGroupManager)}
+                                className="btn btn-icon"
+                                title="Groups"
+                            >
+                                👥
+                            </button>
+                            <button
                                 onClick={() => setShowSettings(!showSettings)}
                                 className="btn btn-icon"
                                 title="Settings"
@@ -154,20 +164,15 @@ const AppContent: React.FC = () => {
                         )}
                     </main>
 
+                    <GroupChatManager
+                        isOpen={showGroupManager}
+                        onClose={() => setShowGroupManager(false)}
+                    />
+
                     {showSettings && (
                         <div className="modal-overlay" onClick={() => setShowSettings(false)}>
                             <div className="modal" onClick={(e) => e.stopPropagation()}>
-                                <div className="mb-lg">
-                                    <h2 className="card-title">Settings</h2>
-                                    <button
-                                        onClick={() => setShowSettings(false)}
-                                        className="btn btn-icon"
-                                        style={{ position: 'absolute', top: '1rem', right: '1rem' }}
-                                    >
-                                        ✕
-                                    </button>
-                                </div>
-                                <DataManager />
+                                {/* ... settings content ... */}
                             </div>
                         </div>
                     )}

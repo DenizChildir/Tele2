@@ -9,6 +9,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -130,6 +131,7 @@ func main() {
 	})
 
 	// API Routes
+	setupGroupRoutes(app)
 	app.Get("/ws/:id", websocket.New(handleWebSocket))
 	app.Get("/api/generate-id", handleGenerateID)
 	app.Get("/api/status/:id", handleUserStatus)
@@ -344,55 +346,40 @@ func handleWebSocket(c *websocket.Conn) {
 	log.Printf("Sending all messages for user: %s", userID)
 	sendAllMessages(userID)
 
+	sendGroupMessagesToUser(userID)
+
 	// Send current online users status
 	log.Printf("Sending online users status to user: %s", userID)
 	sendCurrentOnlineUsers(client)
 
+	log.Printf("Sending online users status to user: %s", userID)
+	sendCurrentOnlineUsers(client)
+
+	// Send group messages for user
+	log.Printf("Sending group messages for user: %s", userID)
+	sendGroupMessagesToUser(userID)
+
 	// WebSocket message handling loop
 	for {
-		_, rawMessage, err := c.ReadMessage() // Remove unused messageType variable
+		_, rawMessage, err := c.ReadMessage()
 		if err != nil {
 			log.Printf("Error reading message: %v", err)
 			break
 		}
 
-		// First try to determine the message type
-		// FIRST: Check if this is a WebRTC signaling message and handle immediately
+		// First check for WebRTC signaling
 		var signalingCheck map[string]interface{}
 		if err := json.Unmarshal(rawMessage, &signalingCheck); err == nil {
 			if messageType, exists := signalingCheck["messageType"]; exists {
 				if messageType == "webrtc_signaling" {
 					log.Printf("Processing WebRTC signaling message from %s", userID)
-
-					// Parse as signaling message
-					var signalingMsg map[string]interface{}
-					if err := json.Unmarshal(rawMessage, &signalingMsg); err == nil {
-						// Get target ID
-						if toId, exists := signalingMsg["toId"].(string); exists {
-							log.Printf("Forwarding WebRTC signaling to %s", toId)
-
-							clientsMux.RLock()
-							targetClient, targetExists := clients[toId]
-							clientsMux.RUnlock()
-
-							if targetExists && targetClient.IsOnline {
-								// Forward the raw message directly
-								if err := targetClient.Conn.WriteMessage(websocket.TextMessage, rawMessage); err != nil {
-									log.Printf("Error forwarding WebRTC signaling: %v", err)
-								} else {
-									log.Printf("Successfully forwarded WebRTC signaling to %s", toId)
-								}
-							} else {
-								log.Printf("Target client %s not available for WebRTC signaling", toId)
-							}
-						}
-					}
-					continue // Skip all other message processing for WebRTC messages
+					// ... existing WebRTC handling code ...
+					continue
 				}
 			}
 		}
 
-		// If not a signaling message, parse as a regular chat message
+		// Parse as regular message
 		var msg Message
 		if err := json.Unmarshal(rawMessage, &msg); err != nil {
 			log.Printf("Error parsing message: %v", err)
@@ -409,6 +396,13 @@ func handleWebSocket(c *websocket.Conn) {
 		// Ensure status is set
 		if msg.Status == "" {
 			msg.Status = "sent"
+		}
+
+		// ADD THIS NEW CHECK for group messages:
+		if strings.HasPrefix(msg.ToID, "GROUP_") {
+			// This is a group message - handle it with the group handler
+			handleGroupMessage(msg)
+			continue // Skip the rest of the loop for group messages
 		}
 
 		switch content := getMessageContentString(msg.Content); content {
@@ -832,4 +826,112 @@ func sendOfflineMessages(userID string) {
 		log.Printf("Error committing transaction: %v", err)
 		tx.Rollback()
 	}
+}
+
+func sendGroupMessagesToUser(userID string) {
+	// Get all groups the user is a member of
+	groupRows, err := db.Query(
+		"SELECT group_id FROM group_members WHERE user_id = ? AND is_banned = FALSE",
+		userID,
+	)
+	if err != nil {
+		log.Printf("Error getting user groups: %v", err)
+		return
+	}
+	defer groupRows.Close()
+
+	clientsMux.RLock()
+	client := clients[userID]
+	clientsMux.RUnlock()
+
+	if client == nil {
+		return
+	}
+
+	// For each group, send recent messages
+	for groupRows.Next() {
+		var groupID string
+		if err := groupRows.Scan(&groupID); err != nil {
+			continue
+		}
+
+		// Get recent messages for this group
+		msgQuery := `
+            SELECT id, group_id, from_id, content, timestamp, delivered, read_by, status, reply_to
+            FROM group_messages
+            WHERE group_id = ?
+            ORDER BY timestamp DESC
+            LIMIT 50
+        `
+
+		msgRows, err := db.Query(msgQuery, groupID)
+		if err != nil {
+			continue
+		}
+
+		for msgRows.Next() {
+			var groupMsgID, groupMsgGroupID, groupMsgFromID, groupMsgContent string
+			var groupMsgTimestamp time.Time
+			var groupMsgDelivered bool
+			var readByJSON string
+			var groupMsgStatus string
+			var replyToJSON sql.NullString
+
+			err := msgRows.Scan(
+				&groupMsgID, &groupMsgGroupID, &groupMsgFromID, &groupMsgContent,
+				&groupMsgTimestamp, &groupMsgDelivered, &readByJSON, &groupMsgStatus, &replyToJSON,
+			)
+			if err != nil {
+				continue
+			}
+
+			// Parse read_by to check if current user has read it
+			var readBy []string
+			json.Unmarshal([]byte(readByJSON), &readBy)
+
+			hasRead := false
+			for _, reader := range readBy {
+				if reader == userID {
+					hasRead = true
+					break
+				}
+			}
+
+			// Parse reply_to if exists
+			var replyTo *ReplyMetadata
+			if replyToJSON.Valid {
+				var reply ReplyMetadata
+				if err := json.Unmarshal([]byte(replyToJSON.String), &reply); err == nil {
+					replyTo = &reply
+				}
+			}
+
+			// Send as regular Message format that the client expects
+			msg := Message{
+				ID:         groupMsgID,
+				FromID:     groupMsgFromID,
+				ToID:       groupMsgGroupID, // The group ID goes in ToID
+				Content:    groupMsgContent,
+				Timestamp:  groupMsgTimestamp,
+				Delivered:  true,
+				ReadStatus: hasRead,
+				Status:     groupMsgStatus,
+				ReplyTo:    replyTo,
+			}
+
+			// Send to client
+			client.Conn.WriteJSON(msg)
+		}
+		msgRows.Close()
+	}
+}
+
+// Helper function to check if slice contains string
+func contains(slice []string, str string) bool {
+	for _, s := range slice {
+		if s == str {
+			return true
+		}
+	}
+	return false
 }
