@@ -11,6 +11,7 @@ import { initializeStorage } from './store/fileStorage';
 import { initializeAllMessagesAsync } from './store/messageSlice';
 import './styles/app.css'; // Single CSS file
 import { GroupChatManager } from './components/GroupChatManager';
+import {fetchUserGroupsAsync} from "./store/groupSlice";
 
 
 const AppContent: React.FC = () => {
@@ -18,19 +19,21 @@ const AppContent: React.FC = () => {
     const currentUserId = useAppSelector(state => state.messages.currentUserId);
     const connectedToUser = useAppSelector(state => state.messages.connectedToUser);
     const messages = useAppSelector(state => state.messages.messages);
+    const groupUnreadCounts = useAppSelector(state => state.groups.unreadCounts);
 
     const [storageInitialized, setStorageInitialized] = useState(false);
     const [storageError, setStorageError] = useState<string | null>(null);
     const [showSettings, setShowSettings] = useState(false);
     const [showGroupManager, setShowGroupManager] = useState(false);
 
-    // Calculate total unread count
+    // Calculate total unread count (including groups)
     const totalUnreadCount = useMemo(() => {
         if (!currentUserId) return 0;
 
         let unreadCount = 0;
         const contactUnreadMap = new Map<string, number>();
 
+        // Count direct message unreads
         messages.forEach(msg => {
             // Skip non-chat messages
             if (!msg.content ||
@@ -42,6 +45,11 @@ const AppContent: React.FC = () => {
                 return;
             }
 
+            // Skip group messages in direct message count
+            if (msg.toId?.startsWith('GROUP_')) {
+                return;
+            }
+
             // Count unread messages from other users
             if (msg.fromId !== currentUserId && msg.toId === currentUserId && !msg.readStatus) {
                 const currentCount = contactUnreadMap.get(msg.fromId) || 0;
@@ -49,35 +57,31 @@ const AppContent: React.FC = () => {
             }
         });
 
-        // Sum up unread counts, excluding current conversation
+        // Sum up direct message unread counts, excluding current conversation
         contactUnreadMap.forEach((count, contactId) => {
             if (contactId !== connectedToUser) {
                 unreadCount += count;
             }
         });
 
+        // Add group unread counts, excluding current group
+        Object.entries(groupUnreadCounts).forEach(([groupId, count]) => {
+            if (groupId !== connectedToUser && count > 0) {
+                unreadCount += count;
+            }
+        });
+
         return unreadCount;
-    }, [messages, currentUserId, connectedToUser]);
+    }, [messages, currentUserId, connectedToUser, groupUnreadCounts]);
 
     const handleStorageInit = async () => {
         try {
             await initializeStorage();
             setStorageInitialized(true);
-            setStorageError(null);
         } catch (error) {
-            const message = error instanceof Error && error.name === 'NotAllowedError'
-                ? 'Permission denied. Please try again and allow file system access.'
-                : 'Failed to initialize storage. Please refresh and try again.';
-            setStorageError(message);
+            setStorageError('Failed to initialize storage. Please try again.');
         }
     };
-
-    // Load all messages when user logs in
-    useEffect(() => {
-        if (currentUserId) {
-            dispatch(initializeAllMessagesAsync(currentUserId));
-        }
-    }, [currentUserId, dispatch]);
 
     // Initial storage setup screen
     if (!storageInitialized) {
@@ -172,7 +176,17 @@ const AppContent: React.FC = () => {
                     {showSettings && (
                         <div className="modal-overlay" onClick={() => setShowSettings(false)}>
                             <div className="modal" onClick={(e) => e.stopPropagation()}>
-                                {/* ... settings content ... */}
+                                <div className="mb-lg">
+                                    <h2 className="card-title">Settings</h2>
+                                    <button
+                                        onClick={() => setShowSettings(false)}
+                                        className="btn btn-icon"
+                                        style={{ position: 'absolute', top: '1rem', right: '1rem' }}
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                                <DataManager />
                             </div>
                         </div>
                     )}

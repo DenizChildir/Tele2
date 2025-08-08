@@ -1,4 +1,4 @@
-// Updated Chat.tsx - Now with reply feature and contact switcher support
+// Updated Chat.tsx - Now with better group message handling
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '../hooks/redux';
 import { useWebSocket } from './WebSocketManager';
@@ -12,7 +12,14 @@ import { Message, MessageContent, MessageContentType, ReplyMetadata } from '../t
 import { FilePreview } from './FilePreview';
 import { getFileData } from '../store/fileStorage';
 import { ContactSwitcher } from './ContactSwitcher';
-import { addGroupMessage, markGroupMessageAsRead } from '../store/groupSlice';
+import {
+    addGroupMessage,
+    markGroupMessageAsRead,
+    markAllGroupMessagesAsRead,
+    resetGroupUnreadCount,
+    fetchGroupMessagesAsync,
+    setCurrentGroup
+} from '../store/groupSlice';
 import {GroupInfo} from "./GroupInfo";
 import { useAppSelector as useGroupSelector } from '../hooks/redux';
 import { GroupChatManager } from './GroupChatManager';
@@ -43,12 +50,11 @@ export const Chat: React.FC = () => {
     const { sendFile, isConnected: isPeerConnected, createConnection, getFileUrl } = useWebRTC();
     const isGroupChat = connectedToUser?.startsWith('GROUP_');
 
-
     const isUserOnline = connectedToUser ? users[connectedToUser]?.online : false;
 
     const groups = useGroupSelector(state => state.groups.groups);
+    const groupMessages = useGroupSelector(state => state.groups.groupMessages);
     const [showGroupManager, setShowGroupManager] = useState(false);
-
 
     const conversationMessages = messages.filter(msg => {
         if (!msg.content ||
@@ -60,8 +66,8 @@ export const Chat: React.FC = () => {
 
         // For group chats
         if (isGroupChat) {
-            return msg.toId === connectedToUser ||
-                (msg.fromId === currentUserId && msg.toId === connectedToUser);
+            // Show messages where toId is the group
+            return msg.toId === connectedToUser;
         }
 
         // For direct messages (existing logic)
@@ -69,6 +75,42 @@ export const Chat: React.FC = () => {
             (msg.fromId === connectedToUser && msg.toId === currentUserId);
     });
 
+    // Set current group when viewing a group chat
+    useEffect(() => {
+        if (isGroupChat && connectedToUser) {
+            dispatch(setCurrentGroup(connectedToUser));
+            // Reset unread count when viewing the group
+            dispatch(resetGroupUnreadCount(connectedToUser));
+            // Fetch group messages if not already loaded
+            if (!groupMessages[connectedToUser]) {
+                dispatch(fetchGroupMessagesAsync(connectedToUser));
+            }
+        } else {
+            dispatch(setCurrentGroup(null));
+        }
+    }, [isGroupChat, connectedToUser, dispatch]);
+
+    // Mark group messages as read when viewing them
+    useEffect(() => {
+        if (isGroupChat && connectedToUser && currentUserId) {
+            const groupMsgs = groupMessages[connectedToUser] || [];
+            groupMsgs.forEach(msg => {
+                if (!msg.readBy.includes(currentUserId) && msg.fromId !== currentUserId) {
+                    dispatch(markGroupMessageAsRead({
+                        groupId: connectedToUser,
+                        messageId: msg.id,
+                        userId: currentUserId
+                    }));
+                }
+            });
+
+            // Mark all as read
+            dispatch(markAllGroupMessagesAsRead({
+                groupId: connectedToUser,
+                userId: currentUserId
+            }));
+        }
+    }, [isGroupChat, connectedToUser, currentUserId, groupMessages, dispatch]);
 
     // Load file URLs for messages when component mounts or messages change
     useEffect(() => {
@@ -100,10 +142,16 @@ export const Chat: React.FC = () => {
 
             setIsLoading(true);
             try {
-                await dispatch(initializeMessagesAsync({
-                    userId1: currentUserId,
-                    userId2: connectedToUser
-                })).unwrap();
+                if (isGroupChat) {
+                    // For group chats, fetch group messages
+                    await dispatch(fetchGroupMessagesAsync(connectedToUser)).unwrap();
+                } else {
+                    // For direct messages
+                    await dispatch(initializeMessagesAsync({
+                        userId1: currentUserId,
+                        userId2: connectedToUser
+                    })).unwrap();
+                }
             } catch (error) {
                 setError('Failed to load messages');
             } finally {
@@ -112,10 +160,12 @@ export const Chat: React.FC = () => {
         };
 
         loadMessages();
-    }, [currentUserId, connectedToUser, dispatch]);
+    }, [currentUserId, connectedToUser, isGroupChat, dispatch]);
 
-    // Handle read receipts
+    // Handle read receipts for direct messages
     useEffect(() => {
+        if (isGroupChat) return; // Skip for group chats
+
         const handleVisibility = () => {
             if (document.visibilityState === 'visible' && messageProcessor) {
                 const unreadMessages = conversationMessages.filter(
@@ -144,7 +194,7 @@ export const Chat: React.FC = () => {
         handleVisibility();
 
         return () => document.removeEventListener('visibilitychange', handleVisibility);
-    }, [conversationMessages, currentUserId, messageProcessor, dispatch]);
+    }, [conversationMessages, currentUserId, messageProcessor, isGroupChat, dispatch]);
 
     // Auto-scroll to bottom
     useEffect(() => {
@@ -434,212 +484,221 @@ export const Chat: React.FC = () => {
         );
     };
 
-
-
     return (
         <>
-        <div className="chat-container">
-            <div className="chat-header">
-                <div className="chat-header-left">
-                    <button
-                        onClick={() => setShowContactSwitcher(!showContactSwitcher)}
-                        className="btn btn-icon contact-switcher-toggle"
-                        title="Show contacts"
-                    >
-                        <span className="contact-switcher-icon">💬</span>
-                    </button>
-                    <div className="chat-user-info">
+            <div className="chat-container">
+                <div className="chat-header">
+                    <div className="chat-header-left">
+                        <button
+                            onClick={() => setShowContactSwitcher(!showContactSwitcher)}
+                            className="btn btn-icon contact-switcher-toggle"
+                            title="Show contacts"
+                        >
+                            <span className="contact-switcher-icon">💬</span>
+                        </button>
+                        <div className="chat-user-info">
                     <span>
                         {isGroupChat ? 'Group: ' : 'Chat with: '}
                         <strong>{isGroupChat && connectedToUser ? groups[connectedToUser]?.name : connectedToUser}</strong>
                     </span>
-                        {!isGroupChat && (
-                            <div className="status">
-                                <span className={`status-dot status-${isUserOnline ? 'online' : 'offline'}`}></span>
-                                <span>{isUserOnline ? 'Online' : 'Offline'}</span>
+                            {!isGroupChat && (
+                                <div className="status">
+                                    <span className={`status-dot status-${isUserOnline ? 'online' : 'offline'}`}></span>
+                                    <span>{isUserOnline ? 'Online' : 'Offline'}</span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    <div className="status">
+                        <span className={`status-dot status-${isConnected ? 'online' : 'offline'}`}></span>
+                        <span>Connection</span>
+                        {connectedToUser && !isGroupChat && isPeerConnected(connectedToUser) && (
+                            <div className="status ml-2">
+                                <span className="status-dot status-online"></span>
+                                <span>WebRTC</span>
                             </div>
                         )}
                     </div>
                 </div>
-                <div className="status">
-                    <span className={`status-dot status-${isConnected ? 'online' : 'offline'}`}></span>
-                    <span>Connection</span>
-                    {connectedToUser && !isGroupChat && isPeerConnected(connectedToUser) && (
-                        <div className="status ml-2">
-                            <span className="status-dot status-online"></span>
-                            <span>WebRTC</span>
+
+                {isGroupChat && connectedToUser && (
+                    <GroupInfo
+                        groupId={connectedToUser}
+                        onManageClick={() => setShowGroupManager(true)}
+                    />
+                )}
+
+                <ContactSwitcher
+                    isOpen={showContactSwitcher}
+                    onClose={() => setShowContactSwitcher(false)}
+                />
+
+                <div className="chat-messages">
+                    {isLoading ? (
+                        <div className="empty-state">
+                            <div className="spinner"></div>
+                            <p>Loading messages...</p>
+                        </div>
+                    ) : conversationMessages.length === 0 ? (
+                        <div className="empty-state">
+                            <p className="text-muted">No messages yet. Start a conversation!</p>
+                        </div>
+                    ) : (
+                        conversationMessages.map(message => (
+                            <div
+                                key={message.id}
+                                ref={el => {
+                                    if (el) messageRefs.current.set(message.id, el);
+                                }}
+                                className={`message ${
+                                    message.fromId === currentUserId ? 'message-outgoing' : ''
+                                } ${highlightedMessageId === message.id ? 'reply-highlighted' : ''}`}
+                                style={{ position: 'relative' }}
+                            >
+                                {message.fromId === 'system' ? (
+                                    <div className="message-system">
+                                        <div className="message-system-content">
+                                            {typeof message.content === 'string' ? message.content : 'System message'}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {isGroupChat && message.fromId !== currentUserId && (
+                                            <div className="message-group-header message-group-header-incoming">
+                                                {message.fromId}
+                                            </div>
+                                        )}
+                                        <div className="message-actions">
+                                            <button
+                                                className="reply-button"
+                                                onClick={() => handleReply(message)}
+                                                title="Reply"
+                                            >
+                                                <span>↩️</span>
+                                                <span>Reply</span>
+                                            </button>
+                                        </div>
+                                        <div className={`message-bubble ${
+                                            message.fromId === currentUserId
+                                                ? 'message-bubble-outgoing'
+                                                : 'message-bubble-incoming'
+                                        }`}>
+                                            {renderMessageContent(message)}
+                                        </div>
+                                        <div className="message-meta">
+                                            <span>{formatTime(message.timestamp)}</span>
+                                            {message.fromId === currentUserId && !isGroupChat && (
+                                                <span className="message-status">
+                                                {message.status === 'read' ? '✓✓✓' :
+                                                    message.status === 'delivered' ? '✓✓' : '✓'}
+                                            </span>
+                                            )}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        ))
+                    )}
+                    <div ref={messagesEndRef} />
+                </div>
+
+                <div className="chat-input-area">
+                    {error && (
+                        <div className="alert alert-error mb-md">
+                            <span>⚠️</span>
+                            <span>{error}</span>
                         </div>
                     )}
-                </div>
-            </div>
 
-            {isGroupChat && connectedToUser && (
-                <GroupInfo
-                    groupId={connectedToUser}
-                    onManageClick={() => setShowGroupManager(true)}
-                />
-            )}
+                    {isFileTransferring && (
+                        <div className="alert alert-success mb-md">
+                            <span>📤</span>
+                            <span>Transferring file via WebRTC...</span>
+                        </div>
+                    )}
 
-            <ContactSwitcher
-                isOpen={showContactSwitcher}
-                onClose={() => setShowContactSwitcher(false)}
-            />
-
-            <div className="chat-messages">
-                {/* ... loading and empty states ... */}
-                {conversationMessages.map(message => (
-                    <div
-                        key={message.id}
-                        ref={el => {
-                            if (el) messageRefs.current.set(message.id, el);
-                        }}
-                        className={`message ${
-                            message.fromId === currentUserId ? 'message-outgoing' : ''
-                        } ${highlightedMessageId === message.id ? 'reply-highlighted' : ''}`}
-                        style={{ position: 'relative' }}
-                    >
-                        {message.fromId === 'system' ? (
-                            <div className="message-system">
-                                <div className="message-system-content">
-                                    {typeof message.content === 'string' ? message.content : 'System message'}
-                                </div>
-                            </div>
-                        ) : (
-                            <>
-                                {isGroupChat && message.fromId !== currentUserId && (
-                                    <div className="message-group-header message-group-header-incoming">
-                                        {message.fromId}
-                                    </div>
-                                )}
-                                <div className="message-actions">
-                                    <button
-                                        className="reply-button"
-                                        onClick={() => handleReply(message)}
-                                        title="Reply"
-                                    >
-                                        <span>↩️</span>
-                                        <span>Reply</span>
-                                    </button>
-                                </div>
-                                <div className={`message-bubble ${
-                                    message.fromId === currentUserId
-                                        ? 'message-bubble-outgoing'
-                                        : 'message-bubble-incoming'
-                                }`}>
-                                    {renderMessageContent(message)}
-                                </div>
-                                <div className="message-meta">
-                                    <span>{formatTime(message.timestamp)}</span>
-                                    {message.fromId === currentUserId && (
-                                        <span className="message-status">
-                                        {message.status === 'read' ? '✓✓✓' :
-                                            message.status === 'delivered' ? '✓✓' : '✓'}
-                                    </span>
-                                    )}
-                                </div>
-                            </>
-                        )}
-                    </div>
-                ))}
-                <div ref={messagesEndRef} />
-            </div>
-
-            <div className="chat-input-area">
-                {error && (
-                    <div className="alert alert-error mb-md">
-                        <span>⚠️</span>
-                        <span>{error}</span>
-                    </div>
-                )}
-
-                {isFileTransferring && (
-                    <div className="alert alert-success mb-md">
-                        <span>📤</span>
-                        <span>Transferring file via WebRTC...</span>
-                    </div>
-                )}
-
-                {replyingTo && (
-                    <div className="reply-input-bar">
-                        <div className="reply-input-content">
-                            <span>↩️</span>
-                            <span className="reply-input-user">
+                    {replyingTo && (
+                        <div className="reply-input-bar">
+                            <div className="reply-input-content">
+                                <span>↩️</span>
+                                <span className="reply-input-user">
                                 {replyingTo.fromId === currentUserId ? 'You' : replyingTo.fromId}:
                             </span>
-                            <span className="reply-input-text">
+                                <span className="reply-input-text">
                                 {getReplyPreviewText(replyingTo)}
                             </span>
-                        </div>
-                        <button
-                            onClick={cancelReply}
-                            className="reply-cancel-button"
-                            title="Cancel reply"
-                        >
-                            ✕
-                        </button>
-                    </div>
-                )}
-
-                {selectedFile && (
-                    <div className="file-preview mb-sm">
-                        <span className="file-icon">📎</span>
-                        <div className="file-info">
-                            <div className="file-name">{selectedFile.name}</div>
-                            <div className="file-size">
-                                {(selectedFile.size / 1024).toFixed(1)} KB
                             </div>
+                            <button
+                                onClick={cancelReply}
+                                className="reply-cancel-button"
+                                title="Cancel reply"
+                            >
+                                ✕
+                            </button>
                         </div>
+                    )}
+
+                    {selectedFile && (
+                        <div className="file-preview mb-sm">
+                            <span className="file-icon">📎</span>
+                            <div className="file-info">
+                                <div className="file-name">{selectedFile.name}</div>
+                                <div className="file-size">
+                                    {(selectedFile.size / 1024).toFixed(1)} KB
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setSelectedFile(null);
+                                    if (fileInputRef.current) fileInputRef.current.value = '';
+                                }}
+                                className="btn btn-icon"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    )}
+
+                    <form onSubmit={handleSubmit} className="chat-input-form">
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            onChange={handleFileSelect}
+                            className="hidden"
+                            id="file-input"
+                            disabled={isFileTransferring || (isGroupChat && !isConnected)}
+                        />
+                        {!isGroupChat && (
+                            <label htmlFor="file-input" className="btn btn-icon">
+                                📎
+                            </label>
+                        )}
+
+                        <input
+                            type="text"
+                            value={messageText}
+                            onChange={(e) => setMessageText(e.target.value)}
+                            placeholder={isConnected ? "Type a message..." : "Connecting..."}
+                            className="input"
+                            disabled={!isConnected || isFileTransferring}
+                        />
+
                         <button
-                            onClick={() => {
-                                setSelectedFile(null);
-                                if (fileInputRef.current) fileInputRef.current.value = '';
-                            }}
-                            className="btn btn-icon"
+                            type="submit"
+                            disabled={!isConnected || (!messageText.trim() && !selectedFile) || isFileTransferring}
+                            className="btn btn-primary"
                         >
-                            ✕
+                            {isFileTransferring ? 'Sending...' : 'Send'}
                         </button>
-                    </div>
-                )}
-
-                <form onSubmit={handleSubmit} className="chat-input-form">
-                    <input
-                        ref={fileInputRef}
-                        type="file"
-                        onChange={handleFileSelect}
-                        className="hidden"
-                        id="file-input"
-                        disabled={isFileTransferring}
-                    />
-                    <label htmlFor="file-input" className="btn btn-icon">
-                        📎
-                    </label>
-
-                    <input
-                        type="text"
-                        value={messageText}
-                        onChange={(e) => setMessageText(e.target.value)}
-                        placeholder={isConnected ? "Type a message..." : "Connecting..."}
-                        className="input"
-                        disabled={!isConnected || isFileTransferring}
-                    />
-
-                    <button
-                        type="submit"
-                        disabled={!isConnected || (!messageText.trim() && !selectedFile) || isFileTransferring}
-                        className="btn btn-primary"
-                    >
-                        {isFileTransferring ? 'Sending...' : 'Send'}
-                    </button>
-                </form>
+                    </form>
+                </div>
             </div>
-        </div>
-    {showGroupManager && (
-        <GroupChatManager
-            isOpen={showGroupManager}
-            onClose={() => setShowGroupManager(false)}
-        />
-    )}
-</>
-
+            {showGroupManager && (
+                <GroupChatManager
+                    isOpen={showGroupManager}
+                    onClose={() => setShowGroupManager(false)}
+                />
+            )}
+        </>
     );
 };

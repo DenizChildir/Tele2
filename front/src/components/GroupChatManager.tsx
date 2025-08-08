@@ -35,6 +35,9 @@ export const GroupChatManager: React.FC<GroupChatManagerProps> = ({ isOpen, onCl
     const [addMemberUserId, setAddMemberUserId] = useState('');
     const [showAdminMenu, setShowAdminMenu] = useState<string | null>(null);
 
+    const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+    const [memberInput, setMemberInput] = useState('');
+
     // Load user's groups on mount
     useEffect(() => {
         if (currentUserId && isOpen) {
@@ -206,51 +209,147 @@ export const GroupChatManager: React.FC<GroupChatManagerProps> = ({ isOpen, onCl
         );
     };
 
-    const renderCreateGroup = () => (
-        <form onSubmit={handleCreateGroup} className="form">
-            <div className="form-group">
-                <label className="form-label">Group Name</label>
-                <input
-                    type="text"
-                    value={newGroupName}
-                    onChange={(e) => setNewGroupName(e.target.value)}
-                    placeholder="Enter group name"
-                    className="input"
-                    maxLength={50}
-                    required
-                />
-            </div>
+    // In GroupChatManager.tsx, update the create group form section
+// Replace the existing renderCreateGroup function with this:
 
-            <div className="form-group">
-                <label className="form-label">Description (optional)</label>
-                <textarea
-                    value={newGroupDescription}
-                    onChange={(e) => setNewGroupDescription(e.target.value)}
-                    placeholder="What's this group about?"
-                    className="input"
-                    rows={3}
-                    maxLength={200}
-                />
-            </div>
+    const renderCreateGroup = () => {
+        const handleAddMemberToList = () => {
+            if (memberInput.trim() && !selectedMembers.includes(memberInput.trim())) {
+                setSelectedMembers([...selectedMembers, memberInput.trim()]);
+                setMemberInput('');
+            }
+        };
 
-            <div className="btn-group">
-                <button
-                    type="button"
-                    onClick={() => setActiveTab('list')}
-                    className="btn btn-secondary"
-                >
-                    Cancel
-                </button>
-                <button
-                    type="submit"
-                    disabled={loading || !newGroupName.trim()}
-                    className="btn btn-primary"
-                >
-                    {loading ? 'Creating...' : 'Create Group'}
-                </button>
-            </div>
-        </form>
-    );
+        const handleRemoveMemberFromList = (userId: string) => {
+            setSelectedMembers(selectedMembers.filter(id => id !== userId));
+        };
+
+        const handleCreateGroupSubmit = async (e: React.FormEvent) => {
+            e.preventDefault();
+            if (!newGroupName.trim() || !currentUserId) return;
+
+            try {
+                await dispatch(createGroupAsync({
+                    request: {
+                        name: newGroupName.trim(),
+                        description: newGroupDescription.trim(),
+                        initialMembers: selectedMembers // Add selected members
+                    },
+                    userId: currentUserId
+                })).unwrap();
+
+                // Reset form and switch to list
+                setNewGroupName('');
+                setNewGroupDescription('');
+                setSelectedMembers([]); // Reset selected members
+                setMemberInput(''); // Reset input
+                setActiveTab('list');
+
+                // Refresh groups list
+                dispatch(fetchUserGroupsAsync(currentUserId));
+            } catch (error) {
+                console.error('Failed to create group:', error);
+            }
+        };
+
+        return (
+            <form onSubmit={handleCreateGroupSubmit} className="form">
+                <div className="form-group">
+                    <label className="form-label">Group Name</label>
+                    <input
+                        type="text"
+                        value={newGroupName}
+                        onChange={(e) => setNewGroupName(e.target.value)}
+                        placeholder="Enter group name"
+                        className="input"
+                        maxLength={50}
+                        required
+                    />
+                </div>
+
+                <div className="form-group">
+                    <label className="form-label">Description (optional)</label>
+                    <textarea
+                        value={newGroupDescription}
+                        onChange={(e) => setNewGroupDescription(e.target.value)}
+                        placeholder="What's this group about?"
+                        className="input"
+                        rows={3}
+                        maxLength={200}
+                    />
+                </div>
+
+                <div className="form-group">
+                    <label className="form-label">Add Members</label>
+                    <div className="form-inline">
+                        <input
+                            type="text"
+                            value={memberInput}
+                            onChange={(e) => setMemberInput(e.target.value)}
+                            onKeyPress={(e) => {
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleAddMemberToList();
+                                }
+                            }}
+                            placeholder="Enter user ID"
+                            className="input"
+                            style={{ flex: 1 }}
+                        />
+                        <button
+                            type="button"
+                            onClick={handleAddMemberToList}
+                            disabled={!memberInput.trim()}
+                            className="btn btn-secondary"
+                        >
+                            Add
+                        </button>
+                    </div>
+
+                    {selectedMembers.length > 0 && (
+                        <div className="selected-members-list">
+                            <div className="text-small text-muted mt-sm mb-sm">Members to add:</div>
+                            {selectedMembers.map(userId => (
+                                <div key={userId} className="selected-member-item">
+                                    <span>{userId}</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleRemoveMemberFromList(userId)}
+                                        className="btn btn-icon btn-sm"
+                                        title="Remove"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className="btn-group">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setActiveTab('list');
+                            // Clear form when canceling
+                            setSelectedMembers([]);
+                            setMemberInput('');
+                        }}
+                        className="btn btn-secondary"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="submit"
+                        disabled={loading || !newGroupName.trim()}
+                        className="btn btn-primary"
+                    >
+                        {loading ? 'Creating...' : 'Create Group'}
+                    </button>
+                </div>
+            </form>
+        );
+    };
 
     const renderManageGroup = () => {
         if (!selectedGroupId) return null;

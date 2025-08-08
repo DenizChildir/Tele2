@@ -1,4 +1,4 @@
-// groupSlice.ts - Redux state management for group chat
+// Updated groupSlice.ts - Redux state management for group chat
 import { createSlice, PayloadAction, createAsyncThunk } from '@reduxjs/toolkit';
 import {
     Group,
@@ -151,6 +151,37 @@ const groupSlice = createSlice({
             }
         },
 
+        addGroupToUser(state, action: PayloadAction<Group>) {
+            const group = action.payload;
+            state.groups[group.id] = group;
+
+            // Initialize unread count if not exists
+            if (state.unreadCounts[group.id] === undefined) {
+                state.unreadCounts[group.id] = 0;
+            }
+
+            console.log(`[GroupSlice] Added group ${group.id} to user's groups`);
+        },
+
+        incrementGroupUnreadCount(state, action: PayloadAction<string>) {
+            const groupId = action.payload;
+
+            // Only increment if not the current group
+            if (groupId !== state.currentGroupId) {
+                if (state.unreadCounts[groupId] === undefined) {
+                    state.unreadCounts[groupId] = 0;
+                }
+                state.unreadCounts[groupId]++;
+                console.log(`[GroupSlice] Incremented unread count for group ${groupId} to ${state.unreadCounts[groupId]}`);
+            }
+        },
+
+        resetGroupUnreadCount(state, action: PayloadAction<string>) {
+            const groupId = action.payload;
+            state.unreadCounts[groupId] = 0;
+            console.log(`[GroupSlice] Reset unread count for group ${groupId}`);
+        },
+
         addGroupMessage(state, action: PayloadAction<GroupMessage>) {
             const { groupId } = action.payload;
             if (!state.groupMessages[groupId]) {
@@ -171,10 +202,7 @@ const groupSlice = createSlice({
                             : 'File';
                 }
 
-                // Increment unread count if not current group
-                if (groupId !== state.currentGroupId) {
-                    state.unreadCounts[groupId] = (state.unreadCounts[groupId] || 0) + 1;
-                }
+                // Don't increment unread here - it's handled by incrementGroupUnreadCount
             }
         },
 
@@ -187,6 +215,22 @@ const groupSlice = createSlice({
                 if (message && !message.readBy.includes(userId)) {
                     message.readBy.push(userId);
                 }
+            }
+        },
+
+        markAllGroupMessagesAsRead(state, action: PayloadAction<{ groupId: string; userId: string }>) {
+            const { groupId, userId } = action.payload;
+            const messages = state.groupMessages[groupId];
+
+            if (messages) {
+                messages.forEach(msg => {
+                    if (!msg.readBy.includes(userId)) {
+                        msg.readBy.push(userId);
+                    }
+                });
+
+                // Reset unread count
+                state.unreadCounts[groupId] = 0;
             }
         },
 
@@ -275,6 +319,9 @@ const groupSlice = createSlice({
         // Fetch group messages
         builder.addCase(fetchGroupMessagesAsync.fulfilled, (state, action) => {
             state.groupMessages[action.payload.groupId] = action.payload.messages;
+
+            // Reset unread count when messages are fetched (user is viewing them)
+            state.unreadCounts[action.payload.groupId] = 0;
         });
 
         // Add members
@@ -339,8 +386,12 @@ const groupSlice = createSlice({
 
 export const {
     setCurrentGroup,
+    addGroupToUser,
+    incrementGroupUnreadCount,
+    resetGroupUnreadCount,
     addGroupMessage,
     markGroupMessageAsRead,
+    markAllGroupMessagesAsRead,
     updateGroupMemberStatus,
     updateGroupInfo,
     addGroupNotification,

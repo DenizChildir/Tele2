@@ -189,6 +189,7 @@ const messageSlice = createSlice({
                         ...message,
                         status: message.status || 'sent'
                     });
+                    console.log('[Redux] Added message to store:', message);
                 }
             }
         });

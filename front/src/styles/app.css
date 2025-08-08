@@ -1707,3 +1707,37 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+
+/* Add these styles to your app.css file */
+
+/* Selected members list in create group form */
+.selected-members-list {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--gray-50);
+  border-radius: var(--radius-sm);
+}
+
+.selected-member-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  margin: var(--space-xs);
+  background: white;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-full);
+  font-size: 0.875rem;
+}
+
+.selected-member-item .btn-sm {
+  padding: 2px;
+  font-size: 0.75rem;
+  line-height: 1;
+  min-width: auto;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

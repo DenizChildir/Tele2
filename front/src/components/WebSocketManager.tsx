@@ -7,9 +7,15 @@ import {
     removeFromQueue
 } from '../store/messageSlice';
 import { MessageProcessor } from '../service/messageProcessor';
-import { Message } from '../types/types';
+import {Message, MessageContent} from '../types/types';
 import { config } from "../config";
-import {addGroupMessage, addGroupNotification} from "../store/groupSlice";
+import {
+    addGroupMessage,
+    addGroupNotification,
+    fetchUserGroupsAsync,
+    addGroupToUser,
+    incrementGroupUnreadCount
+} from "../store/groupSlice";
 
 interface WebSocketContextType {
     ws: WebSocket | null;
@@ -72,48 +78,124 @@ export const WebSocketManager: React.FC<WebSocketManagerProps> = ({ children }) 
                 currentUserId
             );
 
+            // Fetch user's groups after connection
+            dispatch(fetchUserGroupsAsync(currentUserId));
+
             processPendingMessages();
         };
 
         ws.onmessage = async (event) => {
-            const message = JSON.parse(event.data);
+            try {
+                const data = JSON.parse(event.data);
+                console.log('[WebSocket] Received message:', data);
 
-            // Handle group notifications
-            if (message.messageType === 'group_notification') {
-                dispatch(addGroupNotification(message.data));
-                return;
-            }
+                // Handle different message types based on messageType field
+                if (data.messageType) {
+                    switch (data.messageType) {
+                        case 'group_notification':
+                            console.log('[WebSocket] Group notification:', data);
 
-            // Handle WebRTC signaling (existing)
-            if (message.messageType === 'webrtc_signaling') {
-                return;
-            }
+                            const notification = data.data;
+                            dispatch(addGroupNotification(notification));
 
-            // Handle status updates (existing)
-            if (message.content === 'status_update') {
-                dispatch(setUserOnlineStatus({
-                    userId: message.fromId,
-                    online: message.status === 'online'
-                }));
-                return;
-            }
+                            // If user was added to a group, add the group to their list
+                            if (notification.type === 'member_added' && notification.metadata) {
+                                const metadata = notification.metadata;
 
-            // Check if it's a group message
-            if (message.toId?.startsWith('GROUP_')) {
-                dispatch(addGroupMessage({
-                    id: message.id,
-                    groupId: message.toId,
-                    fromId: message.fromId,
-                    content: message.content,
-                    timestamp: message.timestamp,
-                    delivered: message.delivered,
-                    readBy: message.readStatus ? [currentUserId] : [],
-                    status: message.status,
-                    replyTo: message.replyTo
-                }));
-            } else {
-                // Handle regular direct messages
-                await messageProcessorRef.current?.processIncomingMessage(message);
+                                // Check if this notification is about the current user being added
+                                if (metadata.userId === currentUserId ||
+                                    notification.message?.includes(currentUserId)) {
+
+                                    console.log('[WebSocket] User added to group, adding to list...');
+
+                                    // Create a basic group object from the notification
+                                    const newGroup = {
+                                        id: notification.groupId,
+                                        name: metadata.groupName || `Group ${notification.groupId}`,
+                                        description: '',
+                                        createdBy: metadata.addedBy || '',
+                                        createdAt: new Date().toISOString(),
+                                        memberCount: 0,
+                                        lastActivity: new Date().toISOString(),
+                                        lastMessage: 'You were added to this group'
+                                    };
+
+                                    // Add the group to the user's group list
+                                    dispatch(addGroupToUser(newGroup));
+
+                                    // Refresh groups to get full details
+                                    dispatch(fetchUserGroupsAsync(currentUserId));
+                                }
+                            }
+                            return;
+
+                        case 'webrtc_signaling':
+                            console.log('[WebSocket] WebRTC signaling message');
+                            return;
+
+                        default:
+                            console.log('[WebSocket] Unknown message type:', data.messageType);
+                    }
+                }
+
+                // Regular message handling
+                const message = data as Message;
+
+                // Handle status updates
+                if (message.content === 'status_update') {
+                    console.log('[WebSocket] Status update:', message);
+                    dispatch(setUserOnlineStatus({
+                        userId: message.fromId,
+                        online: (message as any).status === 'online'
+                    }));
+                    return;
+                }
+
+                // Check if it's a group message
+                if (message.toId?.startsWith('GROUP_')) {
+                    console.log('[WebSocket] Received group message:', message);
+
+                    // Convert content to ensure it's compatible with GroupMessage type
+                    let groupContent: string | MessageContent = '';
+
+                    if (typeof message.content === 'string') {
+                        groupContent = message.content;
+                    } else if (message.content && typeof message.content === 'object') {
+                        if ('type' in message.content &&
+                            ['text', 'file', 'image', 'video', 'audio'].includes(message.content.type as string)) {
+                            groupContent = message.content as MessageContent;
+                        } else {
+                            groupContent = JSON.stringify(message.content);
+                        }
+                    }
+
+                    // Add to group messages
+                    dispatch(addGroupMessage({
+                        id: message.id,
+                        groupId: message.toId,
+                        fromId: message.fromId,
+                        content: groupContent,
+                        timestamp: message.timestamp,
+                        delivered: message.delivered || false,
+                        readBy: message.readStatus ? [currentUserId] : [],
+                        status: message.status || 'delivered',
+                        replyTo: message.replyTo
+                    }));
+
+                    // Increment unread count if message is from another user
+                    if (message.fromId !== currentUserId) {
+                        dispatch(incrementGroupUnreadCount(message.toId));
+                    }
+
+                    // Also add to regular messages for unified message view
+                    await messageProcessorRef.current?.processIncomingMessage(message);
+                } else {
+                    // Handle regular direct messages
+                    console.log('[WebSocket] Received direct message:', message);
+                    await messageProcessorRef.current?.processIncomingMessage(message);
+                }
+            } catch (error) {
+                console.error('[WebSocket] Error processing message:', error);
             }
         };
 

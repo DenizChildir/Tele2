@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { useAppSelector, useAppDispatch } from '../hooks/redux';
 import { setConnectedUser } from '../store/messageSlice';
-import { useAppSelector as useGroupSelector } from '../hooks/redux';
+import { resetGroupUnreadCount, fetchGroupMessagesAsync } from '../store/groupSlice';
 
 interface ContactSwitcherProps {
     isOpen: boolean;
@@ -15,8 +15,10 @@ export const ContactSwitcher: React.FC<ContactSwitcherProps> = ({ isOpen, onClos
     const messages = useAppSelector(state => state.messages.messages);
     const users = useAppSelector(state => state.messages.users);
 
-    const groups = useGroupSelector(state => state.groups.groups);
-    const groupUnreadCounts = useGroupSelector(state => state.groups.unreadCounts);
+    // Access group state using the main useAppSelector
+    const groups = useAppSelector(state => state.groups.groups);
+    const groupUnreadCounts = useAppSelector(state => state.groups.unreadCounts);
+    const groupMessages = useAppSelector(state => state.groups.groupMessages);
 
     // Calculate contacts and unread counts
     const contactsWithUnread = useMemo(() => {
@@ -73,6 +75,16 @@ export const ContactSwitcher: React.FC<ContactSwitcherProps> = ({ isOpen, onClos
     }, [messages, currentUserId]);
 
     const handleContactClick = (contactId: string) => {
+        // If it's a group, reset unread count and fetch messages if needed
+        if (contactId.startsWith('GROUP_')) {
+            dispatch(resetGroupUnreadCount(contactId));
+
+            // Fetch group messages if not already loaded
+            if (!groupMessages[contactId]) {
+                dispatch(fetchGroupMessagesAsync(contactId));
+            }
+        }
+
         dispatch(setConnectedUser(contactId));
         onClose();
     };
@@ -157,32 +169,43 @@ export const ContactSwitcher: React.FC<ContactSwitcherProps> = ({ isOpen, onClos
                                 <div className="contact-switcher-section-header">
                                     <h4>Groups</h4>
                                 </div>
-                                {Object.values(groups).map(group => (
-                                    <div
-                                        key={group.id}
-                                        onClick={() => handleContactClick(group.id)}
-                                        className={`contact-switcher-item contact-switcher-item-group ${
-                                            group.id === connectedToUser ? 'contact-switcher-item-active' : ''
-                                        }`}
-                                    >
-                                        <div className="contact-switcher-item-main">
-                                            <div className="contact-switcher-item-header">
-                                            <span className="contact-switcher-item-name">
-                                                {group.name}
+                                {Object.values(groups).map(group => {
+                                    // Calculate unread count for this group
+                                    const unreadCount = groupUnreadCounts[group.id] || 0;
+
+                                    // Get last message timestamp
+                                    const groupMsgs = groupMessages[group.id];
+                                    const lastMessageTime = groupMsgs && groupMsgs.length > 0
+                                        ? groupMsgs[groupMsgs.length - 1].timestamp
+                                        : group.lastActivity;
+
+                                    return (
+                                        <div
+                                            key={group.id}
+                                            onClick={() => handleContactClick(group.id)}
+                                            className={`contact-switcher-item contact-switcher-item-group ${
+                                                group.id === connectedToUser ? 'contact-switcher-item-active' : ''
+                                            }`}
+                                        >
+                                            <div className="contact-switcher-item-main">
+                                                <div className="contact-switcher-item-header">
+                                                <span className="contact-switcher-item-name">
+                                                    {group.name}
+                                                </span>
+                                                </div>
+                                                <span className="contact-switcher-item-time">
+                                                {lastMessageTime ? formatTime(lastMessageTime) : 'New'}
                                             </span>
                                             </div>
-                                            <span className="contact-switcher-item-time">
-                                            {group.lastActivity ? formatTime(group.lastActivity) : 'New'}
-                                        </span>
-                                        </div>
 
-                                        {groupUnreadCounts[group.id] > 0 && group.id !== connectedToUser && (
-                                            <div className="contact-switcher-unread-badge">
-                                                {groupUnreadCounts[group.id] > 99 ? '99+' : groupUnreadCounts[group.id]}
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
+                                            {unreadCount > 0 && group.id !== connectedToUser && (
+                                                <div className="contact-switcher-unread-badge">
+                                                    {unreadCount > 99 ? '99+' : unreadCount}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </>
                         )}
                     </>
