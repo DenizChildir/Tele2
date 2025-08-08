@@ -1741,3 +1741,113 @@ body {
   align-items: center;
   justify-content: center;
 }
+
+/* ===========================
+   NOTIFICATION BANNER STYLES
+   =========================== */
+
+.notification-container {
+  position: fixed;
+  top: 70px; /* Below header */
+  right: 20px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 400px;
+  pointer-events: none; /* Allow clicking through the container */
+}
+
+.notification-banner {
+  background: white;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  animation: slideInRight 0.3s ease-out;
+  pointer-events: all; /* But allow clicking on the notifications */
+}
+
+.notification-banner:hover {
+  transform: translateX(-5px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+}
+
+.notification-content {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1;
+}
+
+.notification-icon {
+  font-size: 1.5rem;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.notification-message {
+  font-size: 0.9rem;
+  color: var(--gray-800);
+  font-weight: 500;
+}
+
+.notification-close {
+  background: transparent;
+  border: none;
+  color: var(--gray-500);
+  cursor: pointer;
+  font-size: 1.2rem;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s;
+}
+
+.notification-close:hover {
+  background: var(--gray-100);
+  color: var(--gray-700);
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Success notification variant */
+.notification-banner.notification-success {
+  border-left: 4px solid var(--success);
+}
+
+/* Info notification variant */
+.notification-banner.notification-info {
+  border-left: 4px solid var(--primary);
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .notification-container {
+    top: 60px;
+    right: 10px;
+    left: 10px;
+    max-width: none;
+  }
+
+  .notification-banner {
+    width: 100%;
+  }
+}

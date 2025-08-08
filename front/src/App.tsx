@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, {useState, useEffect, useMemo, useRef} from 'react';
 import { Provider } from 'react-redux';
 import { store } from './store/store';
 import { useAppSelector, useAppDispatch } from './hooks/redux';
@@ -12,6 +12,8 @@ import { initializeAllMessagesAsync } from './store/messageSlice';
 import './styles/app.css'; // Single CSS file
 import { GroupChatManager } from './components/GroupChatManager';
 import {fetchUserGroupsAsync} from "./store/groupSlice";
+import {GroupNotificationBanner} from "./components/GroupNotificationBanner";
+
 
 
 const AppContent: React.FC = () => {
@@ -25,6 +27,12 @@ const AppContent: React.FC = () => {
     const [storageError, setStorageError] = useState<string | null>(null);
     const [showSettings, setShowSettings] = useState(false);
     const [showGroupManager, setShowGroupManager] = useState(false);
+
+
+
+    const hasUnreadGroupMessages = useMemo(() => {
+        return Object.values(groupUnreadCounts).some(count => count > 0);
+    }, [groupUnreadCounts]);
 
     // Calculate total unread count (including groups)
     const totalUnreadCount = useMemo(() => {
@@ -134,6 +142,7 @@ const AppContent: React.FC = () => {
         <WebSocketManager>
             <WebRTCManager>
                 <div className="app-container">
+                    <GroupNotificationBanner />
                     <header className="app-header">
                         <UserManager mode="menu" />
                         <div className="app-header-actions">
@@ -147,8 +156,21 @@ const AppContent: React.FC = () => {
                                 onClick={() => setShowGroupManager(!showGroupManager)}
                                 className="btn btn-icon"
                                 title="Groups"
+                                style={{position: 'relative'}}
                             >
                                 👥
+                                {hasUnreadGroupMessages && (
+                                    <span style={{
+                                        position: 'absolute',
+                                        top: '5px',
+                                        right: '5px',
+                                        width: '8px',
+                                        height: '8px',
+                                        backgroundColor: 'var(--danger)',
+                                        borderRadius: '50%',
+                                        border: '2px solid white'
+                                    }}></span>
+                                )}
                             </button>
                             <button
                                 onClick={() => setShowSettings(!showSettings)}

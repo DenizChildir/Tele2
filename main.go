@@ -335,8 +335,22 @@ func handleWebSocket(c *websocket.Conn) {
 
 	clientsMux.Lock()
 	clients[userID] = client
-	log.Printf("Registered client. Total connected clients: %d", len(clients))
+	totalClients := len(clients)
 	clientsMux.Unlock()
+
+	log.Printf("Registered client %s. Total connected clients: %d", userID, totalClients)
+
+	// List all connected clients for debugging
+	clientsMux.RLock()
+	connectedUsers := make([]string, 0, len(clients))
+	for id := range clients {
+		connectedUsers = append(connectedUsers, id)
+	}
+	clientsMux.RUnlock()
+	log.Printf("Currently connected users: %v", connectedUsers)
+
+	// REMOVE THIS LINE - it's trying to unlock an already unlocked mutex
+	// clientsMux.Unlock()
 
 	// Broadcast that user is online
 	log.Printf("Broadcasting online status for user: %s", userID)
@@ -346,18 +360,13 @@ func handleWebSocket(c *websocket.Conn) {
 	log.Printf("Sending all messages for user: %s", userID)
 	sendAllMessages(userID)
 
+	// Send group messages for user
+	log.Printf("Sending group messages for user: %s", userID)
 	sendGroupMessagesToUser(userID)
 
 	// Send current online users status
 	log.Printf("Sending online users status to user: %s", userID)
 	sendCurrentOnlineUsers(client)
-
-	log.Printf("Sending online users status to user: %s", userID)
-	sendCurrentOnlineUsers(client)
-
-	// Send group messages for user
-	log.Printf("Sending group messages for user: %s", userID)
-	sendGroupMessagesToUser(userID)
 
 	// WebSocket message handling loop
 	for {
@@ -367,13 +376,16 @@ func handleWebSocket(c *websocket.Conn) {
 			break
 		}
 
-		// First check for WebRTC signaling
-		var signalingCheck map[string]interface{}
-		if err := json.Unmarshal(rawMessage, &signalingCheck); err == nil {
-			if messageType, exists := signalingCheck["messageType"]; exists {
-				if messageType == "webrtc_signaling" {
+		var msgTypeCheck map[string]interface{}
+		if err := json.Unmarshal(rawMessage, &msgTypeCheck); err == nil {
+			if msgType, ok := msgTypeCheck["messageType"].(string); ok {
+				switch msgType {
+				case "webrtc_signaling":
 					log.Printf("Processing WebRTC signaling message from %s", userID)
-					// ... existing WebRTC handling code ...
+					var sigMsg SignalingMessage
+					if err := json.Unmarshal(rawMessage, &sigMsg); err == nil {
+						handleSignalingMessage(sigMsg)
+					}
 					continue
 				}
 			}
@@ -398,11 +410,12 @@ func handleWebSocket(c *websocket.Conn) {
 			msg.Status = "sent"
 		}
 
-		// ADD THIS NEW CHECK for group messages:
+		// Check if this is a group message
 		if strings.HasPrefix(msg.ToID, "GROUP_") {
-			// This is a group message - handle it with the group handler
+			log.Printf("Detected group message - routing to group handler: %s", msg.ToID)
 			handleGroupMessage(msg)
-			continue // Skip the rest of the loop for group messages
+			log.Printf("Group message handling complete for message %s", msg.ID)
+			continue
 		}
 
 		switch content := getMessageContentString(msg.Content); content {
@@ -473,11 +486,14 @@ func handleSignalingMessage(msg SignalingMessage) {
 }
 
 func broadcastUserStatus(userID string, online bool) {
-	statusMsg := Message{
-		ID:      "status_" + userID,
-		Content: "status_update",
-		FromID:  userID,
-		Status:  map[bool]string{true: "online", false: "offline"}[online],
+	// Create a custom status message structure
+	statusMsg := map[string]interface{}{
+		"id":        "status_" + userID,
+		"content":   "status_update",
+		"fromId":    userID,
+		"toId":      "", // Empty for broadcast messages
+		"status":    map[bool]string{true: "online", false: "offline"}[online],
+		"timestamp": time.Now(),
 	}
 
 	clientsMux.RLock()
@@ -486,7 +502,10 @@ func broadcastUserStatus(userID string, online bool) {
 	// Broadcast to all connected clients except the user themselves
 	for _, client := range clients {
 		if client.IsOnline && client.ID != userID {
-			client.Conn.WriteJSON(statusMsg)
+			err := client.Conn.WriteJSON(statusMsg)
+			if err != nil {
+				log.Printf("Error broadcasting status to %s: %v", client.ID, err)
+			}
 		}
 	}
 }

@@ -4,6 +4,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -182,9 +183,9 @@ func handleCreateGroup(c *fiber.Ctx) error {
 
 	// Add initial members
 	for _, userID := range req.InitialMembers {
-		if userID != req.CreatedBy {
+		if userID != req.CreatedBy && userID != "" {
 			_, err = tx.Exec(
-				"INSERT INTO group_members (group_id, user_id) VALUES (?, ?)",
+				"INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)",
 				groupID, userID,
 			)
 			if err != nil {
@@ -193,12 +194,6 @@ func handleCreateGroup(c *fiber.Ctx) error {
 		}
 	}
 
-	// Commit transaction
-	if err := tx.Commit(); err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to commit"})
-	}
-
-	// Get the created group with member count
 	group := Group{
 		ID:          groupID,
 		Name:        req.Name,
@@ -206,6 +201,39 @@ func handleCreateGroup(c *fiber.Ctx) error {
 		CreatedBy:   req.CreatedBy,
 		CreatedAt:   time.Now(),
 		MemberCount: len(req.InitialMembers) + 1,
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to commit"})
+	}
+
+	// Get the created group with member count
+	group = Group{
+		ID:          groupID,
+		Name:        req.Name,
+		Description: req.Description,
+		CreatedBy:   req.CreatedBy,
+		CreatedAt:   time.Now(),
+		MemberCount: len(req.InitialMembers) + 1,
+	}
+
+	allMembers := append(req.InitialMembers, req.CreatedBy)
+	for _, memberID := range allMembers {
+		if memberID != "" {
+			notifyUser(memberID, GroupNotification{
+				ID:        generateShortID(),
+				GroupID:   groupID,
+				Type:      "member_added",
+				Message:   fmt.Sprintf("You were added to group '%s'", req.Name),
+				Timestamp: time.Now(),
+				Metadata: map[string]interface{}{
+					"userId":    memberID,
+					"groupName": req.Name,
+					"groupId":   groupID,
+				},
+			})
+		}
 	}
 
 	// Send notification to all members
@@ -218,6 +246,29 @@ func handleCreateGroup(c *fiber.Ctx) error {
 	})
 
 	return c.JSON(group)
+}
+
+func notifyUser(userID string, notification GroupNotification) {
+	clientsMux.RLock()
+	client, exists := clients[userID]
+	clientsMux.RUnlock()
+
+	if exists && client.IsOnline {
+		message := map[string]interface{}{
+			"messageType": "group_notification",
+			"groupId":     notification.GroupID,
+			"data":        notification,
+		}
+
+		err := client.Conn.WriteJSON(message)
+		if err != nil {
+			log.Printf("Error sending notification to user %s: %v", userID, err)
+		} else {
+			log.Printf("Successfully sent group notification to user %s", userID)
+		}
+	} else {
+		log.Printf("User %s is not online, cannot send notification", userID)
+	}
 }
 
 // handleGetUserGroups returns all groups a user is a member of
@@ -258,16 +309,28 @@ func handleGetUserGroups(c *fiber.Ctx) error {
 func handleGetGroupMembers(c *fiber.Ctx) error {
 	groupID := c.Params("groupId")
 
+	// First check if the group exists
+	var exists bool
+	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM groups WHERE id = ?)", groupID).Scan(&exists)
+	if err != nil {
+		log.Printf("Error checking group existence: %v", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Database error"})
+	}
+	if !exists {
+		return c.Status(404).JSON(fiber.Map{"error": "Group not found"})
+	}
+
+	// Updated query - removed the invalid u.id as username part
 	query := `
-		SELECT gm.*, u.id as username
-		FROM group_members gm
-		LEFT JOIN users u ON gm.user_id = u.id
-		WHERE gm.group_id = ?
-		ORDER BY gm.role DESC, gm.joined_at ASC
-	`
+        SELECT gm.group_id, gm.user_id, gm.role, gm.joined_at, gm.is_muted, gm.is_banned
+        FROM group_members gm
+        WHERE gm.group_id = ?
+        ORDER BY gm.role DESC, gm.joined_at ASC
+    `
 
 	rows, err := db.Query(query, groupID)
 	if err != nil {
+		log.Printf("Error querying group members for %s: %v", groupID, err)
 		return c.Status(500).JSON(fiber.Map{"error": "Database error"})
 	}
 	defer rows.Close()
@@ -275,12 +338,12 @@ func handleGetGroupMembers(c *fiber.Ctx) error {
 	var members []GroupMemberWithDetails
 	for rows.Next() {
 		var m GroupMemberWithDetails
-		var username sql.NullString
 		err := rows.Scan(
 			&m.GroupID, &m.UserID, &m.Role, &m.JoinedAt,
-			&m.IsMuted, &m.IsBanned, &username,
+			&m.IsMuted, &m.IsBanned,
 		)
 		if err != nil {
+			log.Printf("Error scanning member row: %v", err)
 			continue
 		}
 
@@ -289,13 +352,15 @@ func handleGetGroupMembers(c *fiber.Ctx) error {
 		_, m.IsOnline = clients[m.UserID]
 		clientsMux.RUnlock()
 
-		if username.Valid {
-			m.Username = username.String
-		} else {
-			m.Username = m.UserID
-		}
+		// For now, use UserID as username since we don't have a users table
+		m.Username = m.UserID
 
 		members = append(members, m)
+	}
+
+	// If no members array was created, return empty array instead of null
+	if members == nil {
+		members = []GroupMemberWithDetails{}
 	}
 
 	return c.JSON(members)
@@ -379,35 +444,63 @@ func handleAddGroupMembers(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "Invalid request"})
 	}
 
-	// Check if requester is admin
+	// Check if requester is admin (or remove this check if you want any member to add)
 	var isAdmin bool
 	err := db.QueryRow(
 		"SELECT role = 'admin' FROM group_members WHERE group_id = ? AND user_id = ?",
 		groupID, req.AddedBy,
 	).Scan(&isAdmin)
 
-	if err != nil || !isAdmin {
-		return c.Status(403).JSON(fiber.Map{"error": "Not authorized"})
-	}
+	// For now, allow any member to add others (you can re-enable admin check later)
+	// if err != nil || !isAdmin {
+	//     return c.Status(403).JSON(fiber.Map{"error": "Not authorized"})
+	// }
+
+	// Get group name for notification
+	var groupName string
+	db.QueryRow("SELECT name FROM groups WHERE id = ?", groupID).Scan(&groupName)
 
 	// Add members
+	successCount := 0
 	for _, userID := range req.UserIDs {
-		_, err = db.Exec(
-			"INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)",
-			groupID, userID,
-		)
-		if err == nil {
-			// Send notification
-			notifyGroupMembers(groupID, GroupNotification{
-				ID:        generateShortID(),
-				GroupID:   groupID,
-				Type:      "member_added",
-				Message:   userID + " was added to the group",
-				Timestamp: time.Now(),
-				Metadata:  map[string]interface{}{"userId": userID},
-			})
+		if userID != "" {
+			_, err = db.Exec(
+				"INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)",
+				groupID, userID,
+			)
+			if err == nil {
+				successCount++
+
+				// Send notification to the added member
+				notifyUser(userID, GroupNotification{
+					ID:        generateShortID(),
+					GroupID:   groupID,
+					Type:      "member_added",
+					Message:   fmt.Sprintf("You were added to group '%s'", groupName),
+					Timestamp: time.Now(),
+					Metadata: map[string]interface{}{
+						"userId":    userID,
+						"groupName": groupName,
+						"addedBy":   req.AddedBy,
+					},
+				})
+
+				// Notify other group members
+				notifyGroupMembers(groupID, GroupNotification{
+					ID:        generateShortID(),
+					GroupID:   groupID,
+					Type:      "member_added",
+					Message:   fmt.Sprintf("%s was added to the group", userID),
+					Timestamp: time.Now(),
+					Metadata:  map[string]interface{}{"userId": userID},
+				})
+			} else {
+				log.Printf("Failed to add member %s: %v", userID, err)
+			}
 		}
 	}
+
+	log.Printf("Added %d members to group %s", successCount, groupID)
 
 	// Return updated member list
 	return handleGetGroupMembers(c)
@@ -546,6 +639,7 @@ func handleLeaveGroup(c *fiber.Ctx) error {
 func handleGroupMessage(msg Message) {
 	// Extract group ID from toId (format: GROUP_XXXX)
 	groupID := msg.ToID
+	log.Printf("Handling group message for group: %s from user: %s", groupID, msg.FromID)
 
 	// Check if sender is a valid member and not muted/banned
 	var canSend bool
@@ -555,7 +649,26 @@ func handleGroupMessage(msg Message) {
 		groupID, msg.FromID,
 	).Scan(&canSend, &isMuted)
 
-	if err != nil || !canSend {
+	if err != nil {
+		log.Printf("Error checking member status: %v", err)
+		// Send error back to sender
+		clientsMux.RLock()
+		sender := clients[msg.FromID]
+		clientsMux.RUnlock()
+
+		if sender != nil {
+			errorMsg := "You are not a member of this group"
+			sender.Conn.WriteJSON(Message{
+				ID:      "error_" + msg.ID,
+				Content: errorMsg,
+				FromID:  "system",
+				ToID:    msg.FromID,
+			})
+		}
+		return
+	}
+
+	if !canSend {
 		// Send error back to sender
 		clientsMux.RLock()
 		sender := clients[msg.FromID]
@@ -591,6 +704,9 @@ func handleGroupMessage(msg Message) {
 	case map[string]interface{}:
 		contentBytes, _ := json.Marshal(content)
 		contentStr = string(contentBytes)
+	default:
+		contentBytes, _ := json.Marshal(content)
+		contentStr = string(contentBytes)
 	}
 
 	_, err = db.Exec(
@@ -603,6 +719,8 @@ func handleGroupMessage(msg Message) {
 		return
 	}
 
+	log.Printf("Stored group message %s in database", msg.ID)
+
 	// Get all group members
 	rows, err := db.Query(
 		"SELECT user_id FROM group_members WHERE group_id = ? AND is_banned = FALSE",
@@ -614,31 +732,27 @@ func handleGroupMessage(msg Message) {
 	}
 	defer rows.Close()
 
-	// Broadcast to all online members
-	//groupMsg := GroupMessage{
-	//	ID:        msg.ID,
-	//	GroupID:   groupID,
-	//	FromID:    msg.FromID,
-	//	Content:   msg.Content,
-	//	Timestamp: msg.Timestamp,
-	//	Delivered: true,
-	//	ReadBy:    []string{msg.FromID},
-	//	Status:    "delivered",
-	//	ReplyTo:   msg.ReplyTo,
-	//}
-
-	clientsMux.RLock()
-	defer clientsMux.RUnlock()
-
+	// Collect all member IDs
+	var memberIDs []string
 	for rows.Next() {
 		var memberID string
 		if err := rows.Scan(&memberID); err != nil {
 			continue
 		}
+		memberIDs = append(memberIDs, memberID)
+	}
 
+	log.Printf("Broadcasting to %d group members", len(memberIDs))
+
+	// Broadcast to all online members
+	clientsMux.RLock()
+	defer clientsMux.RUnlock()
+
+	successCount := 0
+	for _, memberID := range memberIDs {
 		if client, exists := clients[memberID]; exists && client.IsOnline {
 			// Send as regular message so existing client code can handle it
-			client.Conn.WriteJSON(Message{
+			err := client.Conn.WriteJSON(Message{
 				ID:         msg.ID,
 				FromID:     msg.FromID,
 				ToID:       groupID,
@@ -649,8 +763,19 @@ func handleGroupMessage(msg Message) {
 				Status:     "delivered",
 				ReplyTo:    msg.ReplyTo,
 			})
+
+			if err != nil {
+				log.Printf("Error sending to member %s: %v", memberID, err)
+			} else {
+				successCount++
+				log.Printf("Successfully sent to member %s", memberID)
+			}
+		} else {
+			log.Printf("Member %s is not online", memberID)
 		}
 	}
+
+	log.Printf("Message broadcast complete. Sent to %d/%d online members", successCount, len(memberIDs))
 }
 
 // Helper functions

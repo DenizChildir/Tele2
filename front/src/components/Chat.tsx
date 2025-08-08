@@ -56,6 +56,21 @@ export const Chat: React.FC = () => {
     const groupMessages = useGroupSelector(state => state.groups.groupMessages);
     const [showGroupManager, setShowGroupManager] = useState(false);
 
+
+    // In Chat.tsx, add this effect:
+    const [showContactSwitcherForNewGroup, setShowContactSwitcherForNewGroup] = useState(false);
+    const previousGroupCount = useRef(Object.keys(groups).length);
+
+    useEffect(() => {
+        const currentGroupCount = Object.keys(groups).length;
+        if (currentGroupCount > previousGroupCount.current) {
+            // New group added, show contact switcher
+            setShowContactSwitcher(true);
+            // Flash the new group or highlight it somehow
+        }
+        previousGroupCount.current = currentGroupCount;
+    }, [groups]);
+
     const conversationMessages = messages.filter(msg => {
         if (!msg.content ||
             msg.content === 'delivered' ||
