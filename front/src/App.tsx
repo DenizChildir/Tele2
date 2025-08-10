@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useMemo, useRef} from 'react';
+import React, {useState, useEffect, useMemo} from 'react';
 import { Provider } from 'react-redux';
 import { store } from './store/store';
 import { useAppSelector, useAppDispatch } from './hooks/redux';
@@ -9,12 +9,10 @@ import { WebSocketManager } from './components/WebSocketManager';
 import { WebRTCManager } from './components/WebRTCManager';
 import { initializeStorage } from './store/fileStorage';
 import { initializeAllMessagesAsync } from './store/messageSlice';
-import './styles/app.css'; // Single CSS file
+import './styles/app.css';
 import { GroupChatManager } from './components/GroupChatManager';
-import {fetchUserGroupsAsync} from "./store/groupSlice";
-import {GroupNotificationBanner} from "./components/GroupNotificationBanner";
-
-
+import { fetchUserGroupsAsync, loadGroupsFromStorageAsync } from "./store/groupSlice";
+import { GroupNotificationBanner } from "./components/GroupNotificationBanner";
 
 const AppContent: React.FC = () => {
     const dispatch = useAppDispatch();
@@ -28,7 +26,15 @@ const AppContent: React.FC = () => {
     const [showSettings, setShowSettings] = useState(false);
     const [showGroupManager, setShowGroupManager] = useState(false);
 
-
+    // Load groups from local storage when user is set
+    useEffect(() => {
+        if (currentUserId && storageInitialized) {
+            console.log('[App] Loading groups from local storage for user:', currentUserId);
+            // First load from local storage
+            dispatch(loadGroupsFromStorageAsync(currentUserId));
+            // Then fetch from server (will happen in WebSocketManager on connection)
+        }
+    }, [currentUserId, storageInitialized, dispatch]);
 
     const hasUnreadGroupMessages = useMemo(() => {
         return Object.values(groupUnreadCounts).some(count => count > 0);

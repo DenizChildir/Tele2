@@ -1,4 +1,4 @@
-// Updated groupSlice.ts - Redux state management for group chat
+// Updated groupSlice.ts - Fixed persistence and loading
 import { createSlice, PayloadAction, createAsyncThunk } from '@reduxjs/toolkit';
 import {
     Group,
@@ -25,6 +25,30 @@ const initialState: GroupState = {
     unreadCounts: {}
 };
 
+// Load groups from local storage on initialization
+export const loadGroupsFromStorageAsync = createAsyncThunk(
+    'groups/loadFromStorage',
+    async (userId: string) => {
+        try {
+            const groups = await fileStorage.getGroups(userId);
+            const groupMessages: { [key: string]: GroupMessage[] } = {};
+
+            // Load messages for each group
+            for (const group of groups) {
+                const messages = await fileStorage.getGroupMessages(group.id);
+                if (messages.length > 0) {
+                    groupMessages[group.id] = messages;
+                }
+            }
+
+            return { groups, groupMessages };
+        } catch (error) {
+            console.error('Error loading groups from storage:', error);
+            return { groups: [], groupMessages: {} };
+        }
+    }
+);
+
 // Async thunks for API calls
 export const createGroupAsync = createAsyncThunk(
     'groups/createGroup',
@@ -48,55 +72,109 @@ export const createGroupAsync = createAsyncThunk(
 export const fetchUserGroupsAsync = createAsyncThunk(
     'groups/fetchUserGroups',
     async (userId: string) => {
-        const response = await fetch(`${config.apiUrl}/api/users/${userId}/groups`);
-        if (!response.ok) throw new Error('Failed to fetch groups');
+        try {
+            const response = await fetch(`${config.apiUrl}/api/users/${userId}/groups`);
+            if (!response.ok) {
+                console.error('Failed to fetch groups:', response.status);
+                // Load from local storage as fallback
+                const localGroups = await fileStorage.getGroups(userId);
+                return localGroups;
+            }
 
-        const groups: Group[] = await response.json();
+            const groups: Group[] = await response.json();
 
-        // Save to local storage
-        for (const group of groups) {
-            await fileStorage.saveGroup(group);
+            // Save to local storage
+            for (const group of groups) {
+                await fileStorage.saveGroup(group);
+            }
+
+            return groups;
+        } catch (error) {
+            console.error('Error fetching groups, loading from local storage:', error);
+            // Fallback to local storage
+            const localGroups = await fileStorage.getGroups(userId);
+            return localGroups;
         }
-
-        return groups;
     }
 );
 
 export const fetchGroupMembersAsync = createAsyncThunk(
     'groups/fetchGroupMembers',
     async (groupId: string) => {
-        const response = await fetch(`${config.apiUrl}/api/groups/${groupId}/members`);
-        if (!response.ok) throw new Error('Failed to fetch group members');
+        try {
+            const response = await fetch(`${config.apiUrl}/api/groups/${groupId}/members`);
+            if (!response.ok) {
+                console.error('Failed to fetch group members:', response.status);
+                return { groupId, members: [] };
+            }
 
-        const members: GroupMemberWithDetails[] = await response.json();
-        return { groupId, members };
+            const members: GroupMemberWithDetails[] = await response.json();
+            return { groupId, members };
+        } catch (error) {
+            console.error('Error fetching group members:', error);
+            return { groupId, members: [] };
+        }
     }
 );
 
 export const fetchGroupMessagesAsync = createAsyncThunk(
     'groups/fetchGroupMessages',
-    async (groupId: string) => {
-        const response = await fetch(`${config.apiUrl}/api/groups/${groupId}/messages`);
-        if (!response.ok) throw new Error('Failed to fetch group messages');
+    async (groupId: string, { getState }) => {
+        const state = getState() as any;
+        const currentUserId = state.messages.currentUserId;
 
-        const messages: GroupMessage[] = await response.json();
+        try {
+            // First try to load from local storage
+            const localMessages = await fileStorage.getGroupMessages(groupId);
 
-        // Save to local storage
-        for (const message of messages) {
-            await fileStorage.saveGroupMessage(message);
+            // Then try to fetch from server
+            const response = await fetch(`${config.apiUrl}/api/groups/${groupId}/messages?userId=${currentUserId}`);
+
+            if (!response.ok) {
+                console.error('Failed to fetch group messages from server:', response.status);
+                // Return local messages if server fails
+                return { groupId, messages: localMessages };
+            }
+
+            const serverMessages: GroupMessage[] = await response.json();
+
+            // Merge server messages with local (server takes precedence for conflicts)
+            const messageMap = new Map<string, GroupMessage>();
+
+            // Add local messages first
+            localMessages.forEach(msg => messageMap.set(msg.id, msg));
+
+            // Override with server messages
+            serverMessages.forEach(msg => messageMap.set(msg.id, msg));
+
+            const mergedMessages = Array.from(messageMap.values())
+                .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+            // Save merged messages to local storage
+            for (const message of mergedMessages) {
+                await fileStorage.saveGroupMessage(message);
+            }
+
+            return { groupId, messages: mergedMessages };
+        } catch (error) {
+            console.error('Error fetching group messages:', error);
+            // Fallback to local messages
+            const localMessages = await fileStorage.getGroupMessages(groupId);
+            return { groupId, messages: localMessages };
         }
-
-        return { groupId, messages };
     }
 );
 
 export const addGroupMembersAsync = createAsyncThunk(
     'groups/addMembers',
-    async (request: AddMembersRequest) => {
+    async (request: AddMembersRequest, { getState }) => {
+        const state = getState() as any;
+        const currentUserId = state.messages.currentUserId;
+
         const response = await fetch(`${config.apiUrl}/api/groups/${request.groupId}/members`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userIds: request.userIds })
+            body: JSON.stringify({ userIds: request.userIds, addedBy: currentUserId })
         });
 
         if (!response.ok) throw new Error('Failed to add members');
@@ -193,6 +271,11 @@ const groupSlice = createSlice({
             if (!exists) {
                 state.groupMessages[groupId].push(action.payload);
 
+                // Sort messages by timestamp
+                state.groupMessages[groupId].sort((a, b) =>
+                    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+                );
+
                 // Update last activity and message
                 if (state.groups[groupId]) {
                     state.groups[groupId].lastActivity = action.payload.timestamp;
@@ -201,8 +284,6 @@ const groupSlice = createSlice({
                             ? action.payload.content
                             : 'File';
                 }
-
-                // Don't increment unread here - it's handled by incrementGroupUnreadCount
             }
         },
 
@@ -287,6 +368,20 @@ const groupSlice = createSlice({
     },
 
     extraReducers: (builder) => {
+        // Load from storage
+        builder.addCase(loadGroupsFromStorageAsync.fulfilled, (state, action) => {
+            action.payload.groups.forEach(group => {
+                state.groups[group.id] = group;
+                if (!state.unreadCounts[group.id]) {
+                    state.unreadCounts[group.id] = 0;
+                }
+            });
+
+            Object.entries(action.payload.groupMessages).forEach(([groupId, messages]) => {
+                state.groupMessages[groupId] = messages;
+            });
+        });
+
         // Create group
         builder.addCase(createGroupAsync.pending, (state) => {
             state.loading = true;

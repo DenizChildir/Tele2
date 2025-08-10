@@ -1,4 +1,4 @@
-// Updated WebSocketManager.tsx
+// Updated WebSocketManager.tsx - Fixed group synchronization
 import React, { useEffect, useRef, useCallback, createContext, useContext } from 'react';
 import { useAppDispatch, useAppSelector } from '../hooks/redux';
 import {
@@ -14,8 +14,10 @@ import {
     addGroupNotification,
     fetchUserGroupsAsync,
     addGroupToUser,
-    incrementGroupUnreadCount
+    incrementGroupUnreadCount,
+    setCurrentGroup
 } from "../store/groupSlice";
+import * as fileStorage from '../store/fileStorage';
 
 interface WebSocketContextType {
     ws: WebSocket | null;
@@ -34,6 +36,7 @@ interface WebSocketManagerProps {
 export const WebSocketManager: React.FC<WebSocketManagerProps> = ({ children }) => {
     const dispatch = useAppDispatch();
     const currentUserId = useAppSelector(state => state.messages.currentUserId);
+    const connectedToUser = useAppSelector(state => state.messages.connectedToUser);
     const pendingMessages = useAppSelector(state => state.messages.messageQueue.pending);
     const wsRef = useRef<WebSocket | null>(null);
     const messageProcessorRef = useRef<MessageProcessor | null>(null);
@@ -78,7 +81,8 @@ export const WebSocketManager: React.FC<WebSocketManagerProps> = ({ children }) 
                 currentUserId
             );
 
-            // Fetch user's groups after connection
+            // Fetch user's groups after connection - this will get all groups including ones added while offline
+            console.log('[WebSocket] Fetching user groups on connection...');
             dispatch(fetchUserGroupsAsync(currentUserId));
 
             processPendingMessages();
@@ -122,6 +126,9 @@ export const WebSocketManager: React.FC<WebSocketManagerProps> = ({ children }) 
 
                                     // Add the group to the user's group list
                                     dispatch(addGroupToUser(newGroup));
+
+                                    // Save to local storage
+                                    await fileStorage.saveGroup(newGroup);
 
                                     // Refresh groups to get full details
                                     dispatch(fetchUserGroupsAsync(currentUserId));
@@ -169,8 +176,7 @@ export const WebSocketManager: React.FC<WebSocketManagerProps> = ({ children }) 
                         }
                     }
 
-                    // Add to group messages
-                    dispatch(addGroupMessage({
+                    const groupMessage = {
                         id: message.id,
                         groupId: message.toId,
                         fromId: message.fromId,
@@ -180,10 +186,16 @@ export const WebSocketManager: React.FC<WebSocketManagerProps> = ({ children }) 
                         readBy: message.readStatus ? [currentUserId] : [],
                         status: message.status || 'delivered',
                         replyTo: message.replyTo
-                    }));
+                    };
 
-                    // Increment unread count if message is from another user
-                    if (message.fromId !== currentUserId) {
+                    // Add to group messages
+                    dispatch(addGroupMessage(groupMessage));
+
+                    // Save group message to local storage
+                    await fileStorage.saveGroupMessage(groupMessage);
+
+                    // Increment unread count if message is from another user and not viewing this group
+                    if (message.fromId !== currentUserId && connectedToUser !== message.toId) {
                         dispatch(incrementGroupUnreadCount(message.toId));
                     }
 
@@ -220,7 +232,7 @@ export const WebSocketManager: React.FC<WebSocketManagerProps> = ({ children }) 
         ws.onerror = (error) => {
             console.error('WebSocket error:', error);
         };
-    }, [currentUserId, dispatch, processPendingMessages]);
+    }, [currentUserId, connectedToUser, dispatch, processPendingMessages]);
 
     useEffect(() => {
         if (currentUserId) {

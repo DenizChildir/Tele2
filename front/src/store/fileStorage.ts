@@ -35,10 +35,39 @@ class FileSystemStorage {
             await writable.write(JSON.stringify(group, null, 2));
             await writable.close();
 
-            console.log(`Saved group: ${group.id}`);
+            console.log(`[FileStorage] Saved group: ${group.id}`);
         } catch (error) {
-            console.error('Error saving group:', error);
+            console.error('[FileStorage] Error saving group:', error);
             throw error;
+        }
+    }
+
+    async getGroups(userId: string): Promise<Group[]> {
+        if (!this.baseDirectory) throw new Error('Storage not initialized');
+
+        try {
+            const groupsDir = await this.getOrCreateDirectory('groups');
+            const groups: Group[] = [];
+
+            for await (const entry of groupsDir.values()) {
+                if (entry.kind === 'file' && entry.name.startsWith('group_') && entry.name.endsWith('.json')) {
+                    try {
+                        const fileHandle = await groupsDir.getFileHandle(entry.name);
+                        const file = await fileHandle.getFile();
+                        const content = await file.text();
+                        const group = JSON.parse(content);
+                        groups.push(group);
+                    } catch (error) {
+                        console.error(`[FileStorage] Error loading group ${entry.name}:`, error);
+                    }
+                }
+            }
+
+            console.log(`[FileStorage] Loaded ${groups.length} groups for user ${userId}`);
+            return groups;
+        } catch (error) {
+            console.error('[FileStorage] Error loading groups:', error);
+            return [];
         }
     }
 
@@ -59,17 +88,50 @@ class FileSystemStorage {
                 // File doesn't exist yet
             }
 
+            // Check if message already exists
             if (!messages.some(msg => msg.id === message.id)) {
                 messages.push(message);
+
+                // Sort by timestamp
+                messages.sort((a, b) =>
+                    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+                );
 
                 const fileHandle = await messagesDir.getFileHandle(filename, { create: true });
                 const writable = await fileHandle.createWritable();
                 await writable.write(JSON.stringify(messages, null, 2));
                 await writable.close();
+
+                console.log(`[FileStorage] Saved group message ${message.id} to ${filename}`);
             }
         } catch (error) {
-            console.error('Error saving group message:', error);
+            console.error('[FileStorage] Error saving group message:', error);
             throw error;
+        }
+    }
+
+    async getGroupMessages(groupId: string): Promise<GroupMessage[]> {
+        if (!this.baseDirectory) throw new Error('Storage not initialized');
+
+        try {
+            const messagesDir = await this.getOrCreateDirectory('groups/messages');
+            const filename = `group_${groupId}_messages.json`;
+
+            try {
+                const fileHandle = await messagesDir.getFileHandle(filename);
+                const file = await fileHandle.getFile();
+                const content = await file.text();
+                const messages = JSON.parse(content);
+
+                console.log(`[FileStorage] Loaded ${messages.length} messages for group ${groupId}`);
+                return messages;
+            } catch {
+                console.log(`[FileStorage] No messages found for group ${groupId}`);
+                return [];
+            }
+        } catch (error) {
+            console.error('[FileStorage] Error loading group messages:', error);
+            return [];
         }
     }
 
@@ -83,20 +145,22 @@ class FileSystemStorage {
             // Remove group file
             try {
                 await groupsDir.removeEntry(`group_${groupId}.json`);
+                console.log(`[FileStorage] Deleted group file for ${groupId}`);
             } catch (error) {
-                console.log('Group file not found');
+                console.log('[FileStorage] Group file not found');
             }
 
             // Remove messages file
             try {
                 await messagesDir.removeEntry(`group_${groupId}_messages.json`);
+                console.log(`[FileStorage] Deleted group messages for ${groupId}`);
             } catch (error) {
-                console.log('Group messages file not found');
+                console.log('[FileStorage] Group messages file not found');
             }
 
-            console.log(`Deleted group data for ${groupId}`);
+            console.log(`[FileStorage] Deleted all group data for ${groupId}`);
         } catch (error) {
-            console.error('Error deleting group data:', error);
+            console.error('[FileStorage] Error deleting group data:', error);
             throw error;
         }
     }
@@ -757,12 +821,28 @@ export const getAllMessages = async (userId: string) => {
 
 // Add these wrapper functions at the end of fileStorage.ts:
 
+
 export const saveGroup = async (group: Group) => {
     await fileStorage.initialize();
-    // For now, we'll store groups in the messages structure
-    // In production, you'd add proper group storage
-    console.log('Saving group:', group);
+    return fileStorage.saveGroup(group);
 };
+
+export const getGroups = async (userId: string) => {
+    await fileStorage.initialize();
+    return fileStorage.getGroups(userId);
+};
+
+export const getGroupMessages = async (groupId: string) => {
+    await fileStorage.initialize();
+    return fileStorage.getGroupMessages(groupId);
+};
+
+export const deleteGroupData = async (groupId: string, userId: string) => {
+    await fileStorage.initialize();
+    return fileStorage.deleteGroupData(groupId, userId);
+};
+
+
 
 export const saveGroupMessage = async (message: GroupMessage) => {
     await fileStorage.initialize();
@@ -781,10 +861,5 @@ export const saveGroupMessage = async (message: GroupMessage) => {
     return fileStorage.saveMessage(regularMessage);
 };
 
-export const deleteGroupData = async (groupId: string, userId: string) => {
-    await fileStorage.initialize();
-    // Implementation for deleting group data
-    console.log('Deleting group data:', groupId, userId);
-};
 
 
